@@ -12,6 +12,7 @@ Usage:
 """
 import argparse
 import asyncio
+import os
 import re
 import sqlite3
 import urllib.parse
@@ -21,7 +22,8 @@ from typing import Any, Dict, List
 import httpx
 
 PROFILE_DIR = Path(__file__).parent / "fb_browser_profile"
-API_BASE = "http://127.0.0.1:8050"
+# Point at the hosted dashboard with DEALS_API_BASE=https://... and DEALS_INGEST_TOKEN=... (Settings → bookmarklet).
+API_BASE = os.environ.get("DEALS_API_BASE", "http://127.0.0.1:8050").rstrip("/")
 
 FB_CITY_MAP = {
     "NSW": "sydney",
@@ -38,7 +40,9 @@ STATE_SUFFIX_RE = re.compile(r",\s*(NSW|VIC|QLD|WA|SA|ACT|TAS|NT)\b")
 
 
 def read_ingest_token() -> str:
-    """The API requires this token; it lives in the local database."""
+    """The API requires this token; it lives in the local database (or DEALS_INGEST_TOKEN for a hosted one)."""
+    if os.environ.get("DEALS_INGEST_TOKEN"):
+        return os.environ["DEALS_INGEST_TOKEN"]
     try:
         conn = sqlite3.connect(str(Path(__file__).parent / "deals.db"))
         row = conn.execute("SELECT value FROM settings WHERE key = 'ingest_token'").fetchone()

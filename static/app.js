@@ -26,6 +26,7 @@ async function api(path, opts = {}) {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401) { location.href = "/login"; throw new Error("Login required"); }
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON error */ }
   if (!res.ok) {

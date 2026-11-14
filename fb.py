@@ -33,6 +33,7 @@ from curl_cffi import requests as cffi_requests
 from playwright.async_api import async_playwright
 
 import health
+from config import BROWSER_ENABLED
 
 log = logging.getLogger("fb")
 
@@ -390,7 +391,7 @@ class FbRun:
         self.city = FB_CITY_SLUGS.get(self.state, "sydney")
         self.errors = errors if errors is not None else []
         self.sem = asyncio.Semaphore(concurrency)
-        self.prefer_browser = PROFILE_DIR.exists() if prefer_browser is None else prefer_browser
+        self.prefer_browser = (BROWSER_ENABLED and PROFILE_DIR.exists()) if prefer_browser is None else prefer_browser
         self.http_fail_streak = 0
         self.http_disabled = False
         self.login_walled = False
@@ -450,7 +451,7 @@ class FbRun:
             for strat in order:
                 if strat == "http" and self.http_disabled:
                     continue
-                if strat == "browser" and self.login_walled and not self.prefer_browser:
+                if strat == "browser" and (not BROWSER_ENABLED or (self.login_walled and not self.prefer_browser)):
                     continue
                 for attempt in range(3 if strat == "http" else 2):
                     t0 = time.time()
@@ -751,6 +752,9 @@ async def inspect_facebook_item_details(url: str) -> Dict[str, Any]:
         if status == "login_wall":
             break
         await asyncio.sleep(1.0 * (attempt + 1) + random.uniform(0, 0.5))
+    if not BROWSER_ENABLED:
+        return {"ok": False, "gone": False, "full_description": "", "listed_time": "", "condition": "", "suburb": "",
+                "error": status}
     try:
         info = await _inspect_browser(canonical)
         health.record("facebook", f"item {item_id}", "browser", "ok" if (info["ok"] or info["gone"]) else status.split(":")[0],

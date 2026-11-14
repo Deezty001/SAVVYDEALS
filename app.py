@@ -26,7 +26,8 @@ import export_xlsx
 import pricing
 import scanning
 from alerts import dispatch_auto_alerts
-from config import DEFAULT_FB_URL, INGEST_ORIGINS, LOCAL_ORIGINS, STATES, STATIC_DIR
+import auth
+from config import ALLOWED_HOSTS, DEFAULT_FB_URL, INGEST_ORIGINS, LOCAL_ORIGINS, PUBLIC_URL, STATES, STATIC_DIR
 from db import get_conn, get_setting, init_db, session as db_session, utcnow_iso
 from evaluator import evaluate_listing
 from ingest import get_reference_parts, get_settings_dict, ingest_raw_listings, public_summary
@@ -55,13 +56,15 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AU PC Part & Bundle Deal Sniper", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 # Order matters: the last middleware added is the outermost.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
 @app.middleware("http")
 async def origin_guard(request: Request, call_next):
     """Reject cross-site browser calls to the API (CSRF / data theft from other tabs)."""
     path = request.url.path
+    if not auth.is_open(path) and not auth.valid_session(request.cookies.get(auth.COOKIE)):
+        return auth.deny(request)
     if path.startswith("/api/") and path != "/api/ingest":
         origin = request.headers.get("origin")
         if origin and origin not in LOCAL_ORIGINS:
@@ -84,6 +87,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Ingest-Token"],
 )
 
+app.include_router(auth.router)
 app.include_router(scanning.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -100,6 +104,11 @@ CSP = (
 # --------------------------------------------------------------------------------------
 # Pages
 # --------------------------------------------------------------------------------------
+@app.get("/healthz", include_in_schema=False)
+def healthz() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/", include_in_schema=False)
 def serve_dashboard() -> Response:
     resp = FileResponse(STATIC_DIR / "index.html")
@@ -330,7 +339,7 @@ async def ingest_from_browser(payload: IngestBatchPayload, request: Request) -> 
 @app.get("/api/ingest-config")
 def ingest_config() -> Dict[str, str]:
     """Same-origin only (see origin_guard). Used to build the bookmarklet."""
-    return {"endpoint": f"{LOCAL_ORIGINS[0]}/api/ingest", "token": get_setting("ingest_token")}
+    return {"endpoint": f"{PUBLIC_URL or LOCAL_ORIGINS[0]}/api/ingest", "token": get_setting("ingest_token")}
 
 
 @app.patch("/api/deals/{deal_id}/status")

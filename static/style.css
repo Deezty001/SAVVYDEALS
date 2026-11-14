@@ -197,3 +197,9 @@ code.token { display: block; padding: 8px; border-radius: 8px; background: var(-
 .health-card h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; text-transform: capitalize; }
 .health-card ul { margin: 0; padding-left: 18px; font-size: 13px; }
 .health-recent { font-size: 12px; color: var(--muted); display: grid; gap: 2px; }
+
+/* Login (hosted deployments) */
+.login-body { min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; }
+.login-card { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 10px; padding: 24px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.login-card .brand { font-size: 1.1rem; margin-bottom: 6px; }

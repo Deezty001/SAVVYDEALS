@@ -83,9 +83,22 @@ Logged out, Facebook caps a search at 24 results; the deep scan splits by price 
 ```
 `tests/real_listings.json` holds real listings, including the ones the old guide wrongly called steals.
 
+## Hosted deployment (Coolify)
+
+The Dockerfile builds a slim image (no browser; Facebook is read over HTTP). Set these environment variables:
+
+- `DEALS_PUBLIC_URL`: e.g. `https://deals.savvycomputers.com.au` (allowed host + origin, bookmarklet endpoint).
+- `DEALS_PASSWORD`: dashboard login. Required anywhere public; unset means no login (local use).
+- Mount a persistent volume at `/data` (holds `deals.db`). `/healthz` is the health check.
+
+To push from a home machine to the hosted instance (e.g. if Facebook blocks the VPS IP):
+```bash
+DEALS_API_BASE=https://deals.savvycomputers.com.au DEALS_INGEST_TOKEN=... .venv/bin/python fb_playwright_scanner.py --state NSW
+```
+
 ## Security notes
 
-- Server binds to `127.0.0.1` only; keep it that way. The Host header is checked and cross-origin browser requests to the API are rejected.
+- Locally the server binds to `127.0.0.1`; hosted, it sits behind Traefik with `DEALS_PASSWORD` login. The Host header is checked and cross-origin browser requests to the API are rejected.
 - `/api/ingest` requires the secret `X-Ingest-Token` (stored in `deals.db`).
 - Discord / Telegram secrets are write-only in the UI and `deals.db` is chmod 600. Don't share or commit `deals.db`.
 - Listing URLs are limited to https Facebook / Gumtree hosts; everything shown in the dashboard is escaped and a strict Content-Security-Policy is applied.
