@@ -1,0 +1,6 @@
+deals.db*
+fb_browser_profile/
+.venv/
+__pycache__/
+.DS_Store
+*.bak

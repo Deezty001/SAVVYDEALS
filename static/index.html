@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>AU PC Deals</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">AU PC Deals</span>
+    <select id="region" class="select" aria-label="Region">
+      <option value="NSW">NSW · Sydney</option>
+      <option value="VIC">VIC · Melbourne</option>
+      <option value="QLD">QLD · Brisbane</option>
+      <option value="WA">WA · Perth</option>
+      <option value="SA">SA · Adelaide</option>
+      <option value="ACT">ACT · Canberra</option>
+      <option value="TAS">TAS · Hobart</option>
+      <option value="ALL">All Australia</option>
+    </select>
+    <span class="spacer"></span>
+    <button class="btn" data-open="pasteDlg">Check an ad</button>
+    <button class="btn" data-open="catalogDlg">Price guide</button>
+    <button class="btn" data-open="settingsDlg">Settings</button>
+    <button class="btn" id="autoBtn" aria-pressed="false" title="Re-scan Facebook every 5 minutes while this tab is open">Auto: off</button>
+    <a class="btn" href="/api/export.xlsx" download>Export Excel</a>
+    <button class="btn" id="deepBtn" title="Search every part we can value, scrolling deep. Takes a while; runs in the background.">Deep scan</button>
+    <button class="btn primary" id="scanBtn">Scan now</button>
+  </div>
+</header>
+
+<main>
+  <div class="page-head">
+    <h1 id="heading">Deals</h1>
+    <span class="muted" id="subhead"></span>
+  </div>
+
+  <div id="progress" class="progress hidden" role="status"></div>
+  <div id="banner" class="banner hidden" role="status"></div>
+
+  <div class="tabs" role="tablist" aria-label="Deal views" id="tabs">
+    <button class="tab" role="tab" data-view="all" aria-selected="true">All <span class="count" id="c-all">0</span></button>
+    <button class="tab" role="tab" data-view="STEAL" aria-selected="false">Steals <span class="count" id="c-steal">0</span></button>
+    <button class="tab" role="tab" data-view="GOOD_OR_BETTER" aria-selected="false">Good or better <span class="count" id="c-good">0</span></button>
+    <button class="tab" role="tab" data-view="OFFER" aria-selected="false">Offers</button>
+    <button class="tab" role="tab" data-view="drops" aria-selected="false">Price drops <span class="count" id="c-drops">0</span></button>
+    <button class="tab" role="tab" data-view="bundles" aria-selected="false">Full PCs &amp; combos <span class="count" id="c-bundles">0</span></button>
+    <button class="tab" role="tab" data-view="saved" aria-selected="false">Saved <span class="count" id="c-saved">0</span></button>
+  </div>
+
+  <div class="filters">
+    <input id="search" class="input search" type="search" placeholder="Filter listings, or type a part and press Enter to scan it live" aria-label="Search listings" />
+    <select id="source" class="select" aria-label="Marketplace">
+      <option value="ALL">All marketplaces</option>
+      <option value="Facebook Marketplace">Facebook</option>
+      <option value="Gumtree AU">Gumtree</option>
+    </select>
+    <select id="series" class="select" aria-label="Hardware">
+      <option value="ALL">All hardware</option>
+      <option>RTX 2000</option><option>RTX 3000</option><option>RTX 4000</option><option>RTX 5000</option>
+      <option>RX 6000</option><option>RX 7000</option><option>RX 9000</option>
+      <option>AM4</option><option>AM5</option><option>LGA1700</option><option>LGA1851</option>
+    </select>
+    <select id="sort" class="select" aria-label="Sort">
+      <option value="score">Best deal</option>
+      <option value="profit">Biggest saving</option>
+      <option value="newest">Newest</option>
+      <option value="price_asc">Price: low to high</option>
+      <option value="price_desc">Price: high to low</option>
+    </select>
+  </div>
+
+  <div class="list" id="list" aria-live="polite"></div>
+</main>
+
+<!-- Check an ad -->
+<dialog id="pasteDlg" aria-labelledby="pasteTitle">
+  <div class="dlg-head">
+    <div><h2 id="pasteTitle">Check an ad</h2><p>Paste a Facebook or Gumtree listing (with the price) to value it.</p></div>
+    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <textarea id="pasteText" class="textarea" rows="5" placeholder="$1,150 – Gaming PC RTX 4070 Super, Ryzen 7 7800X3D, B650, 32GB DDR5, 1TB NVMe"></textarea>
+    <div class="grid2 auto-right">
+      <input id="pasteUrl" class="input" type="url" placeholder="Optional: listing link (facebook.com or gumtree.com.au)" />
+      <button class="btn primary" id="pasteGo">Evaluate</button>
+    </div>
+    <div id="pasteResult" class="hidden"></div>
+  </div>
+</dialog>
+
+<!-- Price guide -->
+<dialog id="catalogDlg" aria-labelledby="catalogTitle">
+  <div class="dlg-head">
+    <div><h2 id="catalogTitle">Used price guide</h2><p>Reference prices (AUD) every listing is valued against. Steal ≤ Good ≤ Average.</p></div>
+    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <input id="catalogSearch" class="input" type="search" placeholder="Search parts, e.g. 4070 Super, 7800X3D" aria-label="Search parts" />
+    <table class="catalog">
+      <thead><tr><th>Part</th><th>Average</th><th>Good ≤</th><th>Steal ≤</th><th></th></tr></thead>
+      <tbody id="catalogBody"></tbody>
+    </table>
+  </div>
+</dialog>
+
+<!-- Settings -->
+<dialog id="settingsDlg" aria-labelledby="settingsTitle">
+  <div class="dlg-head">
+    <div><h2 id="settingsTitle">Settings</h2><p>Region, alerts and search preferences.</p></div>
+    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+  </div>
+  <form class="dlg-body" id="settingsForm" autocomplete="off">
+    <div class="grid3">
+      <label class="field">State
+        <select id="setState" class="select block">
+          <option>NSW</option><option>VIC</option><option>QLD</option><option>WA</option>
+          <option>SA</option><option>ACT</option><option>TAS</option><option>NT</option>
+        </select>
+      </label>
+      <label class="field">City<input id="setCity" class="input" maxlength="60" /></label>
+      <label class="field">Gumtree radius (km)<input id="setRadius" class="input" type="number" min="1" max="500" /></label>
+    </div>
+
+    <div class="section-title">Alerts</div>
+    <div class="grid3">
+      <label class="field">Alert on
+        <select id="setTier" class="select block">
+          <option value="GOOD_DEAL">Good deals &amp; steals</option>
+          <option value="STEAL">Steals only</option>
+          <option value="OFF">Off</option>
+        </select>
+      </label>
+      <label class="field">Min. discount %<input id="setDisc" class="input" type="number" min="0" max="100" /></label>
+      <label class="field">Min. saving $<input id="setProfit" class="input" type="number" min="0" /></label>
+    </div>
+    <label class="field">Discord webhook
+      <input id="setDiscord" class="input" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…" />
+      <div class="secret-note" id="discordNote"></div>
+    </label>
+    <div class="grid2">
+      <label class="field">Telegram bot token
+        <input id="setTgToken" class="input" type="password" autocomplete="off" placeholder="123456:ABC…" />
+        <div class="secret-note" id="tgNote"></div>
+      </label>
+      <label class="field">Telegram chat ID<input id="setTgChat" class="input" /></label>
+    </div>
+
+    <div class="section-title">Search</div>
+    <label class="field">Default queries (comma separated)<textarea id="setQueries" class="textarea" rows="2"></textarea></label>
+    <label class="field">Excluded keywords (comma separated)<textarea id="setExcludes" class="textarea" rows="2"></textarea></label>
+
+    <div class="section-title">Facebook bookmarklet</div>
+    <p class="muted note">Drag this to your bookmarks bar, then click it on a Facebook Marketplace search page to send the listings here. Facebook may block it; the Playwright scanner is the reliable route.</p>
+    <a id="bookmarklet" class="btn" href="#" draggable="true">Send to Deal Sniper</a>
+
+    <div class="form-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
