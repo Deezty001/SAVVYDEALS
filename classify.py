@@ -22,7 +22,7 @@ MULTI = re.compile(
 FROM = re.compile(r"\b(?:from|starting (?:at|from)|prices? start(?:s|ing)? (?:at|from)|as low as|up to)\s*\$\s*\d", re.I)
 NEW_ITEM = re.compile(r"\b(brand new|sealed|unopened|new in box|nib|bnib)\b", re.I)
 SCAM = re.compile(r"\b(deposit (?:required|first)|pay (?:via|by) (?:gift ?card|crypto|western union)|whatsapp|"
-                  r"telegram me|text me on \+?\d|overseas|shipping only from|dm me for (?:price|details))\b", re.I)
+                  r"telegram me|text me on \+?\d|overseas|shipping only from|dm me for (?:price|details)|scam(?:s|mer|mers)?(?: alert)?)\b", re.I)
 
 
 def classify(title: str, description: str = "", price: float = 0.0, source: str = "") -> Dict[str, Any]:

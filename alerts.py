@@ -1,5 +1,9 @@
 """Alert qualification and delivery (Discord, Telegram, ntfy, macOS). Message drafts are never auto-sent."""
+import asyncio
+import re
 from typing import Any, Dict, List
+
+import httpx
 
 from db import get_all_settings
 import pricing
@@ -12,7 +16,7 @@ def qualifies_for_alert(deal: Dict[str, Any], econ: pricing.Econ) -> bool:
     flags = deal.get("flags") or ""
     return (deal["deal_tier"] in ("STEAL", "GOOD_DEAL") and deal["confidence"] >= 65
             and deal["net_profit_aud"] >= econ.min_net_profit and deal["roi_pct"] >= econ.min_roi_pct
-            and "interstate_pc" not in flags and not deal.get("needs_read") and not deal.get("gone_at"))
+            and "interstate_pc" not in flags and "pending_sale" not in flags and not deal.get("needs_read") and not deal.get("gone_at"))
 
 
 async def dispatch_auto_alerts(saved_ids: List[str]) -> int:
@@ -67,3 +71,47 @@ async def dispatch_auto_alerts(saved_ids: List[str]) -> int:
     return sent
 
 
+
+
+async def notify_system(title: str, body: str) -> int:
+    """A plain operational message (scraper down / recovered) on every configured channel. Returns channels reached."""
+    s = get_all_settings()
+    reached = 0
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            if s.get("discord_webhook_url"):
+                r = await client.post(s["discord_webhook_url"], json={"username": "AU PC Deal Sniper",
+                                                                       "content": f"**{title}**\n{body}"[:1900]})
+                reached += r.status_code in (200, 204)
+            if s.get("telegram_bot_token") and s.get("telegram_chat_id"):
+                r = await client.post(f"https://api.telegram.org/bot{s['telegram_bot_token']}/sendMessage",
+                                      json={"chat_id": s["telegram_chat_id"], "text": f"{title}\n{body}"})
+                reached += r.status_code == 200
+            if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", s.get("ntfy_topic", "") or ""):
+                r = await client.post(f"https://ntfy.sh/{s['ntfy_topic']}", content=body.encode("utf-8"),
+                                      headers={"Title": title.encode("ascii", "ignore").decode() or "Deal Sniper",
+                                               "Priority": "high", "Tags": "warning"})
+                reached += r.status_code == 200
+        except Exception:
+            pass
+    if s.get("mac_notify", "1") == "1":
+        esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')[:200]  # noqa: E731
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e", f'display notification "{esc(body)}" with title "{esc(title)}"',
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.wait(), timeout=8)
+            reached += proc.returncode == 0
+        except Exception:
+            pass
+    return reached
+
+
+async def check_health_and_alert() -> None:
+    """After each scheduled pass: tell the user when a source goes down or recovers."""
+    import health
+    for source, h in health.summary().items():
+        msg = health.alert_due(source, h["status"])
+        if msg:
+            reasons = "; ".join(h["reasons"])
+            await notify_system(f"Deal Sniper: {source.title()}", f"{msg} {reasons}".strip())

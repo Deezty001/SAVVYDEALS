@@ -243,6 +243,33 @@ async function startDeepScan() {
   } catch (e) { toast(e.message); }
 }
 
+// ---------- scan health ----------
+const HEALTH_WORD = { healthy: "healthy", degraded: "degraded", down: "DOWN", idle: "idle" };
+const RANK = { down: 3, degraded: 2, healthy: 1, idle: 0 };
+
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    state.health = h;
+    const worst = Object.entries(h).sort((a, b) => RANK[b[1].status] - RANK[a[1].status])[0];
+    const status = worst ? worst[1].status : "idle";
+    $("healthDot").className = `dot ${status}`;
+    $("healthLabel").textContent = status === "healthy" ? "Scans healthy" : status === "idle" ? "Scan health" : `${worst[0][0].toUpperCase() + worst[0].slice(1)} ${HEALTH_WORD[status]}`;
+    if ($("healthDlg").open) renderHealth();
+  } catch { /* health is advisory; never block the dashboard */ }
+}
+
+function renderHealth() {
+  const h = state.health || {};
+  $("healthBody").innerHTML = Object.entries(h).map(([src, v]) => `
+    <div class="health-card">
+      <h3><span class="dot ${esc(v.status)}"></span>${esc(src)}: ${esc(HEALTH_WORD[v.status] || v.status)}</h3>
+      ${v.reasons.length ? `<ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
+      <div class="muted small">Last success: ${esc(v.last_ok_at || "never")} · ${v.attempts_last_hour} attempts and ${v.listings_seen_last_hour} listings read in the last hour</div>
+      <div class="health-recent">${v.recent.map((r) => `<span>${esc(r.ts.slice(11, 16))} · ${esc(r.strategy)} · ${esc(r.status)} · ${r.parsed} read · ${esc(r.query)}${r.note ? " · " + esc(r.note) : ""}</span>`).join("")}</div>
+    </div>`).join("") || `<p class="muted">No scans recorded yet.</p>`;
+}
+
 // ---------- scanning ----------
 function showBanner(errors) {
   const b = $("banner");
@@ -252,6 +279,7 @@ function showBanner(errors) {
 }
 
 async function runScan(body, label) {
+  setTimeout(loadHealth, 8000);
   if (state.scanning) return;
   state.scanning = true;
   $("scanBtn").disabled = true;
@@ -440,6 +468,7 @@ function init() {
     const id = b.dataset.open;
     $(id).showModal();
     if (id === "catalogDlg") openCatalog().catch((e) => toast(e.message));
+    if (id === "healthDlg") loadHealth().then(renderHealth);
     if (id === "settingsDlg") { loadSettings(); buildBookmarklet().catch(() => {}); }
   }));
   document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
@@ -451,6 +480,8 @@ function init() {
   $("settingsForm").addEventListener("submit", saveSettings);
   $("bookmarklet").addEventListener("click", (e) => { e.preventDefault(); toast("Drag it to your bookmarks bar instead of clicking."); });
 
+  loadHealth();
+  setInterval(loadHealth, 60 * 1000);
   loadSettings().then(loadDeals).then(() => api("/api/scan/status")).then((st) => { if (st.running) watchScan(); }).catch((e) => toast(e.message));
 }
 

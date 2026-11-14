@@ -25,6 +25,7 @@
     <span class="spacer"></span>
     <button class="btn" data-open="pasteDlg">Check an ad</button>
     <button class="btn" data-open="catalogDlg">Price guide</button>
+    <button class="btn" data-open="healthDlg" id="healthBtn" title="Is Facebook / Gumtree collection working?"><span class="dot idle" id="healthDot"></span><span id="healthLabel">Scan health</span></button>
     <button class="btn" data-open="settingsDlg">Settings</button>
     <button class="btn" id="autoBtn" aria-pressed="false" title="Re-scan Facebook every 5 minutes while this tab is open">Auto: off</button>
     <a class="btn" href="/api/export.xlsx" download>Export Excel</a>
@@ -106,6 +107,15 @@
       <tbody id="catalogBody"></tbody>
     </table>
   </div>
+</dialog>
+
+<!-- Scan health -->
+<dialog id="healthDlg" aria-labelledby="healthTitle">
+  <div class="dlg-head">
+    <div><h2 id="healthTitle">Scan health</h2><p>Whether listings are actually being collected, per marketplace.</p></div>
+    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="healthBody"></div>
 </dialog>
 
 <!-- Settings -->

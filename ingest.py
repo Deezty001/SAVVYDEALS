@@ -39,7 +39,7 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     conn = get_conn()
     cur = conn.cursor()
-    added = matched = steals = price_drops = rejected = 0
+    added = matched = steals = price_drops = rejected = sold = 0
     saved_ids: List[str] = []
     now = utcnow_iso()
 
@@ -63,6 +63,12 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         lid = _clip(item.get("id"), 40)
         if not re.fullmatch(r"[A-Za-z0-9_]{1,40}", lid or ""):
             lid = "lst_" + hashlib.md5(url.encode()).hexdigest()[:12]
+
+        if item.get("gone"):
+            # Sold / removed on the marketplace itself: retire any stored copy, never store a dead listing.
+            cur.execute("UPDATE listings SET gone_at=?, status='HIDDEN' WHERE id=? AND gone_at=''", (now, lid))
+            sold += 1
+            continue
 
         cur.execute(
             "SELECT price_aud, description, posted_at, status, notified, discovered_at, alerted_price FROM listings WHERE id = ?",
@@ -103,6 +109,8 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         if eval_res["deal_tier"] == "STEAL":
             steals += 1
 
+        if item.get("pending"):
+            eval_res["flags"].append("pending_sale")
         fp, relists = engine_ops.relist_info(cur, lid, title, price_aud)
         if relists:
             eval_res["flags"].append(f"relist_or_crosspost:{relists}")
@@ -134,6 +142,7 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         "price_drops": price_drops,
         "saved": added,
         "rejected": rejected,
+        "sold_or_removed": sold,
         "_saved_ids": saved_ids,
     }
 

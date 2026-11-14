@@ -139,6 +139,11 @@ def init_db() -> None:
         PRIMARY KEY (part_id, day))""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_score ON listings(deal_score DESC)")
+    cur.execute("""CREATE TABLE IF NOT EXISTS scrape_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, source TEXT NOT NULL, query TEXT DEFAULT '',
+        strategy TEXT DEFAULT '', status TEXT NOT NULL, nodes INTEGER DEFAULT 0, parsed INTEGER DEFAULT 0,
+        skipped INTEGER DEFAULT 0, ms INTEGER DEFAULT 0, note TEXT DEFAULT '')""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_runs_source ON scrape_runs(source, id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_tier ON listings(deal_tier)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_discovered ON listings(discovered_at DESC)")
 

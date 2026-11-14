@@ -54,9 +54,19 @@ Discord, Telegram, ntfy (phone push: set an unguessable topic, install the ntfy 
 
 Turn on `scheduler_enabled` (Settings API). It runs a newest-first pass every ~10 minutes over a rotating slice of part searches, deep-reads promising low-confidence ads, detects removed ads, backs off when Facebook shows a login wall, and runs a deep scan + price learning nightly at 2am while the server is running.
 
+## Facebook collection (`fb.py`)
+Facebook embeds each search result and listing as JSON inside the page. We read that directly over plain HTTP with a
+browser TLS fingerprint (about 0.6s per search, no browser, no account), so redesigns of the visible page do not break it.
+Fallbacks, in order: real Chrome reading the same JSON and background API calls, then visible card text.
+Every attempt is logged (`scrape_runs`) and shown under **Scan health**; a down or recovered source also sends an alert.
+When a page cannot be read, the first one per run is saved in `debug/` for a quick parser fix.
+Logged out, Facebook caps a search at 24 results; the deep scan splits by price band to get past that. `fb_login.py`
+(optional) logs in once so the browser path can scroll further. Sold and removed listings are retired automatically.
+
 ## Code layout
 - `app.py`: FastAPI wiring, security middleware, deal / catalog / settings / engine routes.
 - `scanning.py`: live and deep scans, automatic deep reads, the background scheduler (its own router).
+- `fb.py`, `health.py`: Facebook collection (HTTP first, browser fallback) and scrape health tracking.
 - `ingest.py`, `alerts.py`, `models.py`, `config.py`: storing scraped listings, alert delivery, request models, constants.
 - `evaluator.py`, `pricing.py`, `classify.py`, `routing.py`, `messages.py`: the valuation engine (pure functions).
 - `engine_ops.py`: database side of the engine: cached context, `apply_eval`, skip-if-unchanged re-valuation, learned prices, trends.

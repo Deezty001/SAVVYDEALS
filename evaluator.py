@@ -45,7 +45,7 @@ BARE_GPU = re.compile(
     r"(?!\s*(?:mhz|mt|gb|w\b|hz|cl|\$|fps|k\b))", re.I)
 
 
-ENGINE_VERSION = "2"   # bump when valuation logic changes: stored listings are then re-valued once
+ENGINE_VERSION = "3"   # bump when valuation logic changes: stored listings are then re-valued once
 
 
 @lru_cache(maxsize=None)

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 
 import engine_ops
-from alerts import dispatch_auto_alerts
+from alerts import check_health_and_alert, dispatch_auto_alerts
 from config import DEEP_CHUNK, SWEEP_STATES
 from db import get_conn, get_setting, session as db_session, utcnow_iso
 from evaluator import evaluate_listing
@@ -138,7 +138,7 @@ async def run_deep_scan(states: List[str], include_gumtree: bool, max_pages: int
                     prog["matched"] += summary["matched_deals"]
                     prog["errors"] = sorted(set(prog["errors"]) | set(errors))[:10]
                     # Facebook is blocking us: stop instead of hammering it and risking the session.
-                    if fb_seen == 0 and any("login wall" in e for e in errors):
+                    if fb_seen == 0 and any(e.startswith("Facebook") for e in errors):
                         prog["stopped"] = "Facebook is showing a login wall. Stopped to avoid getting blocked."
                         return
         except Exception as e:  # never let the background task die silently
@@ -248,12 +248,13 @@ async def run_quick_pass(per_pass: int = 6) -> None:
                                                  radius_km=radius_km, max_results=16, errors=errors)
             summary = ingest_raw_listings(items)
             await dispatch_auto_alerts(summary["_saved_ids"])
-            if fb_seen == 0 and any("login wall" in e for e in errors):
+            if fb_seen == 0 and any(e.startswith("Facebook") for e in errors):
                 sched_state["backoff"] = min(sched_state["backoff"] + 1, 5)   # double the wait each time
-                sched_state["last_note"] = "Facebook login wall: backing off"
+                sched_state["last_note"] = "Facebook not returning listings: backing off"
             else:
                 sched_state["backoff"] = 0
                 sched_state["last_note"] = f"ok: {len(items)} seen, {summary['matched_deals']} matched"
+            await check_health_and_alert()
             read = await auto_deep_read(5)
             await dispatch_auto_alerts(summary["_saved_ids"])      # deals promoted by deep reads
             engine_ops.mark_stale_gone()

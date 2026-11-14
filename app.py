@@ -510,6 +510,13 @@ def export_xlsx_file(tier: Optional[str] = None) -> Response:
                     headers={"Content-Disposition": 'attachment; filename="au-pc-deals.xlsx"'})
 
 
+@app.get("/api/health")
+def scrape_health() -> Dict[str, Any]:
+    """Per-source collection health: healthy / degraded / down / idle, with reasons and recent attempts."""
+    import health
+    return health.summary()
+
+
 @app.get("/api/trends")
 def trends() -> Dict[str, Any]:
     return {"parts": engine_ops.price_trends()}
