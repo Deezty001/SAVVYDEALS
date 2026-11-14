@@ -196,6 +196,47 @@ class Transport(unittest.TestCase):
         self.assertTrue(info["gone"])
 
 
+class Coverage(unittest.TestCase):
+    def test_urls(self):
+        self.assertEqual(fb.search_url("rtx 3070", "sydney", True, 100, 300),
+                         "https://www.facebook.com/marketplace/sydney/search?query=rtx%203070&sortBy=creation_time_descend&minPrice=100&maxPrice=300")
+        self.assertEqual(fb.search_url("", "sydney", True, None, 50, "computers"),
+                         "https://www.facebook.com/marketplace/sydney/computers?sortBy=creation_time_descend&maxPrice=50")
+
+    def test_category_relevance(self):
+        self.assertTrue(fb.is_relevant_to_query("[computers]", {"title": "Gaming PC RTX 3060"}))
+        self.assertFalse(fb.is_relevant_to_query("[computers]", {"title": "HDMI cable 2m"}))
+
+    def test_sweep_splits_capped_bands_and_unions_results(self):
+        """A fake Facebook that caps every search at 24 but holds 60 listings: bands must recover all of them."""
+        import re as _re
+        stock = []
+        node = fb._find_dicts(_first_blob(SEARCH), "marketplace_listing_title")[0]
+        for i in range(60):
+            n = copy.deepcopy(node)
+            n["id"] = str(7000000 + i)
+            n["listing_price"] = {"amount": f"{100 + i * 10}.00", "formatted_amount": "AU$x"}
+            n["marketplace_listing_title"] = f"RTX 3070 card {i}"
+            stock.append(n)
+
+        async def fake(url, attempt=0):
+            lo = int((_re.search(r"minPrice=(\d+)", url) or [0, 0])[1])
+            hi = int((_re.search(r"maxPrice=(\d+)", url) or [0, 10**9])[1])
+            hit = [n for n in stock if lo <= float(n["listing_price"]["amount"]) <= hi][:24]
+            html = '<script type="application/json">' + json.dumps({"x": hit}) + "</script>"
+            return 200, html, url
+        orig = fb.http_get
+        fb.http_get = fake
+        try:
+            loop = asyncio.new_event_loop()
+            errors, stats = [], {}
+            out = loop.run_until_complete(fb.scrape_facebook_exhaustive(["rtx 3070"], "NSW", 2, 25, errors, stats))
+        finally:
+            fb.http_get = orig
+        self.assertEqual(len(out), 60)
+        self.assertGreater(stats["pages"], 2)
+
+
 class Health(unittest.TestCase):
     def run_(self, status, strategy="http", parsed=20, nodes=24, note=""):
         return {"status": status, "strategy": strategy, "parsed": parsed, "nodes": nodes, "note": note}
@@ -217,6 +258,23 @@ class Health(unittest.TestCase):
         s = health.summary()["facebook"]
         self.assertIn(s["status"], ("healthy", "degraded", "down"))
         self.assertGreaterEqual(s["attempts_last_hour"], 1)
+
+    def test_freshness_measures_discovery_lag(self):
+        import time as _t
+        from datetime import datetime, timezone
+        ctx()
+        conn = __import__("db").get_conn()
+        now = _t.time()
+        iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+        for i, lag_min in enumerate((5, 10, 300)):
+            conn.execute("INSERT OR REPLACE INTO listings (id, source, title, price_aud, url, discovered_at, last_seen, listed_at) "
+                         "VALUES (?,?,?,?,?,?,?,?)", (f"fresh{i}", "Facebook Marketplace", "t", 100, "https://x", iso(now - 600), iso(now),
+                                                      int(now - 600 - lag_min * 60)))
+        conn.commit()
+        f = health.freshness(conn)
+        conn.close()
+        self.assertGreaterEqual(f["n"], 3)
+        self.assertIn("median_min", f)
 
     def test_alert_only_on_transitions(self):
         health._last_alert.clear()

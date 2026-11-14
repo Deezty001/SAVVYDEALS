@@ -1,0 +1,9 @@
+.venv
+.git
+*.db*
+*.bak
+fb_browser_profile
+debug
+__pycache__
+.DS_Store
+tests

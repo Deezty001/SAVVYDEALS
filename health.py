@@ -83,7 +83,7 @@ def summary() -> Dict[str, Any]:
                                    "ORDER BY id DESC LIMIT 1", (source,)).fetchone()
             hour = conn.execute("SELECT count(*), coalesce(sum(parsed),0) FROM scrape_runs WHERE source=? AND ts>=?",
                                 (source, since_hour)).fetchone()
-            out[source] = {**a, "last_ok_at": last_ok[0] if last_ok else None,
+            out[source] = {**a, **({"freshness": freshness(conn)} if source == "facebook" else {}), "last_ok_at": last_ok[0] if last_ok else None,
                            "attempts_last_hour": hour[0], "listings_seen_last_hour": hour[1],
                            "last_strategy": runs[0]["strategy"] if runs else None,
                            "recent": [{"ts": r["ts"], "query": r["query"], "strategy": r["strategy"],
@@ -92,6 +92,24 @@ def summary() -> Dict[str, Any]:
         return out
     finally:
         conn.close()
+
+
+def freshness(conn, hours: int = 24) -> Dict[str, Any]:
+    """Of the Facebook listings posted in the last `hours`, how long until we found them? This is the number
+    that says whether collection is fast enough to beat other buyers (and whether coverage has holes)."""
+    cutoff = int(time.time()) - hours * 3600
+    lags: List[float] = []
+    for r in conn.execute("SELECT listed_at, discovered_at FROM listings WHERE source LIKE 'Facebook%' AND listed_at >= ?",
+                          (cutoff,)):
+        try:
+            found = datetime.strptime(r["discovered_at"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+        except (ValueError, TypeError):
+            continue
+        lags.append(max(0.0, (found - r["listed_at"]) / 60))
+    if not lags:
+        return {"n": 0}
+    lags.sort()
+    return {"n": len(lags), "median_min": round(lags[len(lags) // 2]), "p90_min": round(lags[int(len(lags) * 0.9)])}
 
 
 _last_alert: Dict[str, float] = {}

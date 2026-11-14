@@ -25,6 +25,7 @@ import random
 import re
 import time
 import urllib.parse
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -35,7 +36,7 @@ import health
 
 log = logging.getLogger("fb")
 
-PROFILE_DIR = Path(__file__).parent / "fb_browser_profile"
+PROFILE_DIR = Path(os.environ.get("DEALS_DATA_DIR", str(Path(__file__).parent))) / "fb_browser_profile"
 DEBUG_DIR = Path(__file__).parent / "debug"
 ITEM_URL = "https://www.facebook.com/marketplace/item/{}/"
 
@@ -272,15 +273,21 @@ async def http_get(url: str, attempt: int = 0) -> Tuple[int, str, str]:
 
 
 def search_url(query: str, city_slug: str, newest: bool = False, pmin: Optional[int] = None,
-               pmax: Optional[int] = None) -> str:
-    url = f"https://www.facebook.com/marketplace/{city_slug}/search?query={urllib.parse.quote(query.strip())}"
+               pmax: Optional[int] = None, category: str = "") -> str:
+    """A text search, or (category set, query empty) a browse of a whole marketplace category."""
+    params = []
+    if category:
+        url = f"https://www.facebook.com/marketplace/{city_slug}/{category}"
+    else:
+        url = f"https://www.facebook.com/marketplace/{city_slug}/search"
+        params.append(f"query={urllib.parse.quote(query.strip())}")
     if newest:
-        url += "&sortBy=creation_time_descend"
+        params.append("sortBy=creation_time_descend")
     if pmin is not None:
-        url += f"&minPrice={int(pmin)}"
+        params.append(f"minPrice={int(pmin)}")
     if pmax is not None:
-        url += f"&maxPrice={int(pmax)}"
-    return url
+        params.append(f"maxPrice={int(pmax)}")
+    return url + ("?" + "&".join(params) if params else "")
 
 
 def save_debug(tag: str, html: str) -> Optional[str]:
@@ -431,9 +438,10 @@ class FbRun:
 
     # ---- search -------------------------------------------------------------------------
     async def search(self, query: str, newest: bool = False, pmin: Optional[int] = None, pmax: Optional[int] = None,
-                     max_scrolls: int = 0, max_results: int = 200, meta: Optional[Dict[str, Any]] = None
-                     ) -> List[Dict[str, Any]]:
-        url = search_url(query, self.city, newest, pmin, pmax)
+                     max_scrolls: int = 0, max_results: int = 200, meta: Optional[Dict[str, Any]] = None,
+                     category: str = "") -> List[Dict[str, Any]]:
+        url = search_url(query, self.city, newest, pmin, pmax, category)
+        query = query or f"[{category}]"
         self.stats["searches"] += 1
         async with self.sem:
             await asyncio.sleep(random.uniform(0.15, 0.7))      # jitter: never a perfectly regular cadence
@@ -593,7 +601,21 @@ FB_CAP_THRESHOLD = 22
 MIN_RELEVANT_TO_SPLIT = 3
 
 
+# Whole-category browses catch listings whose titles our searches never match ("Computer for sale").
+FB_CATEGORIES = ("computers",)
+FB_BROAD_QUERIES = ["gaming pc", "graphics card", "gpu", "rtx", "radeon", "geforce", "ryzen", "motherboard",
+                    "pc parts", "pc bundle", "computer parts", "desktop pc"]
+_PC_WORDS = re.compile(r"rtx|gtx|\brx\b|ryzen|intel|\bi[3579]\b|gpu|\bpc\b|motherboard|\bram\b|graphics|cpu|ssd|nvme|geforce|"
+                       r"radeon|gaming|desktop|computer|\bam[45]\b|b[56]\d0|x[67]\d0|z[67-9]\d0|ddr[45]|tower|build", re.I)
+
+
+def is_pc_related(item: Dict[str, Any]) -> bool:
+    return bool(_PC_WORDS.search(f"{item.get('title', '')} {item.get('description', '')}"))
+
+
 def is_relevant_to_query(query: str, item: Dict[str, Any]) -> bool:
+    if query.startswith("["):                      # a category browse, labelled "[computers]"
+        return is_pc_related(item)
     text = f"{item.get('title', '')} {item.get('description', '')}".lower()
     tokens = [t for t in re.split(r"[\s\-]+", query.lower()) if t]
     model = [t for t in tokens if re.search(r"\d", t) and len(t) >= 3]
@@ -604,6 +626,7 @@ def is_relevant_to_query(query: str, item: Dict[str, Any]) -> bool:
 async def scrape_facebook_exhaustive(
     queries: List[str], state: str = "NSW", concurrency: int = 6, max_pages_per_query: int = 25,
     errors: Optional[List[str]] = None, stats: Optional[Dict[str, int]] = None,
+    categories: Tuple[str, ...] = (),
 ) -> List[Dict[str, Any]]:
     deduped: Dict[str, Dict[str, Any]] = {}
     stats = stats if stats is not None else {}
@@ -615,7 +638,8 @@ async def scrape_facebook_exhaustive(
 
         async def fetch_band(query: str, lo: int, hi: Optional[int]) -> Tuple[List[Dict[str, Any]], int]:
             meta: Dict[str, Any] = {}
-            items = await run.search(query, False, lo if lo > 0 else None, hi, 0, 200, meta)
+            cat = query[1:-1] if query.startswith("[") else ""
+            items = await run.search("" if cat else query, True, lo if lo > 0 else None, hi, 0, 200, meta, cat)
             stats["pages"] += 1
             for it in items:
                 deduped[it["id"]] = it
@@ -649,7 +673,8 @@ async def scrape_facebook_exhaustive(
                     if hi is None or med < hi:
                         stack.append((med + 1, hi))
 
-        await asyncio.gather(*(sweep(q) for q in queries), return_exceptions=True)
+        await asyncio.gather(*(sweep(q) for q in list(queries) + [f"[{c}]" for c in categories]),
+                             return_exceptions=True)
     return list(deduped.values())
 
 

@@ -14,6 +14,7 @@ from evaluator import evaluate_listing
 from ingest import get_reference_parts, get_settings_dict, ingest_raw_listings, public_summary
 from models import DeepScanRequest, LiveScanRequest
 from queries import build_deep_queries
+from fb import FB_BROAD_QUERIES, FB_CATEGORIES
 from scrapers import (
     FB_FULL_SWEEP_QUERIES, inspect_facebook_item_details,
     inspect_gumtree_item_details, scrape_facebook_exhaustive, scrape_facebook_marketplace_au, scrape_gumtree_au,
@@ -107,14 +108,14 @@ async def run_deep_scan(states: List[str], include_gumtree: bool, max_pages: int
             extra = []
         queries = build_deep_queries(get_reference_parts(), extra)
         chunks = [queries[i:i + DEEP_CHUNK] for i in range(0, len(queries), DEEP_CHUNK)]
-        prog = {"states": states, "state": states[0], "chunk": 0, "chunks_total": len(chunks) * len(states),
+        prog = {"states": states, "state": states[0], "chunk": 0, "chunks_total": (len(chunks) + 1) * len(states),
                 "queries_total": len(queries), "pages": 0, "listings_seen": 0, "matched": 0, "errors": [], "stopped": None}
         scan_state.update(running=True, mode="deep", progress=prog)
         started = utcnow_iso()
         try:
             for st in states:
                 prog["state"] = st
-                for chunk in chunks:
+                for chunk in chunks + [[]]:            # the final empty chunk sweeps whole categories
                     if deep_cancel.is_set():
                         prog["stopped"] = "Cancelled"
                         return
@@ -122,7 +123,7 @@ async def run_deep_scan(states: List[str], include_gumtree: bool, max_pages: int
                     page_stats: Dict[str, int] = {}
                     items = await scrape_facebook_exhaustive(
                         chunk, state=st, concurrency=6, max_pages_per_query=max_pages,
-                        errors=errors, stats=page_stats)
+                        errors=errors, stats=page_stats, categories=FB_CATEGORIES if not chunk else ())
                     prog["pages"] = prog.get("pages", 0) + page_stats.get("pages", 0)
                     fb_seen = len(items)
                     if include_gumtree:
@@ -218,7 +219,7 @@ SCHED_MAX_S = 7200
 sched_state: Dict[str, Any] = {"next_at": 0.0, "backoff": 0, "rotation": 0, "last_nightly": None, "last_note": ""}
 
 
-async def run_quick_pass(per_pass: int = 6) -> None:
+async def run_quick_pass(per_pass: int = 30) -> None:
     """Newest-first pass over a rotating slice of the part searches (all parts covered over time)."""
     if scan_lock.locked():
         return
@@ -232,16 +233,18 @@ async def run_quick_pass(per_pass: int = 6) -> None:
                 extra = json.loads(settings.get("search_queries", "[]"))
             except ValueError:
                 extra = []
-            queries = build_deep_queries(get_reference_parts(), extra)
+            queries = [q for q in build_deep_queries(get_reference_parts(), extra) if q not in FB_BROAD_QUERIES]
             if not queries:
                 return
+            # Broad searches every pass (a new listing of anything shows up in them within minutes), plus a
+            # rotating slice of the specific ones so every part is re-checked about once an hour.
             start = sched_state["rotation"] % len(queries)
-            batch = (queries + queries)[start:start + per_pass]
+            batch = FB_BROAD_QUERIES + (queries + queries)[start:start + per_pass]
             sched_state["rotation"] = start + per_pass
             errors: List[str] = []
             items = await scrape_facebook_marketplace_au(
                 batch, state=state if state != "ALL" else "NSW", max_per_query=24,
-                include_newest_pass=True, concurrency=3, errors=errors)
+                newest_only=True, concurrency=3, errors=errors)
             fb_seen = len(items)
             for q in batch[:3]:
                 items += await scrape_gumtree_au(q, state=state if state != "ALL" else "NSW",

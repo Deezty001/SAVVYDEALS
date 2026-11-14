@@ -71,7 +71,7 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
             continue
 
         cur.execute(
-            "SELECT price_aud, description, posted_at, status, notified, discovered_at, alerted_price FROM listings WHERE id = ?",
+            "SELECT price_aud, description, posted_at, status, notified, discovered_at, alerted_price, listed_at FROM listings WHERE id = ?",
             (lid,),
         )
         existing = cur.fetchone()
@@ -125,6 +125,7 @@ def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
             "discovered_at": existing["discovered_at"] if existing else now,  # keep the first-seen time
             "last_seen": now, "fingerprint": fp, "relist_count": relists, "gone_at": "",
             "alerted_price": existing["alerted_price"] if existing else 0,
+            "listed_at": int(item.get("listed_epoch") or 0) or (existing["listed_at"] if existing else 0),
         }
         base.update(vals)
         cols = ", ".join(base)

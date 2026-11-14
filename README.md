@@ -60,6 +60,10 @@ browser TLS fingerprint (about 0.6s per search, no browser, no account), so rede
 Fallbacks, in order: real Chrome reading the same JSON and background API calls, then visible card text.
 Every attempt is logged (`scrape_runs`) and shown under **Scan health**; a down or recovered source also sends an alert.
 When a page cannot be read, the first one per run is saved in `debug/` for a quick parser fix.
+Coverage: each background pass runs 12 broad searches (gaming pc, graphics card, gpu, ...) plus a rotating slice of 30 part
+searches, newest first, so every part is re-checked about hourly and anything new surfaces within minutes. The nightly deep scan splits every
+search by price band and also sweeps the whole Computers category, which catches listings with vague titles. **Scan health** shows how long
+it takes us to find listings posted in the last 24 hours.
 Logged out, Facebook caps a search at 24 results; the deep scan splits by price band to get past that. `fb_login.py`
 (optional) logs in once so the browser path can scroll further. Sold and removed listings are retired automatically.
 

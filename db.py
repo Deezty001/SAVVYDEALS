@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
-DB_PATH = Path(__file__).parent / "deals.db"
+DB_PATH = Path(os.environ.get("DEALS_DATA_DIR", str(Path(__file__).parent))) / "deals.db"
 SEED_CATALOG_PATH = Path(__file__).parent / "catalog_seed.json"
 
 # Settings whose values must never be sent back to the browser.
@@ -131,7 +131,7 @@ def init_db() -> None:
                      ("travel_cost_aud", "REAL DEFAULT 0"), ("alerted_price", "REAL DEFAULT 0"),
                      ("gone_at", "TEXT DEFAULT ''"), ("fingerprint", "TEXT DEFAULT ''"),
                      ("relist_count", "INTEGER DEFAULT 0"), ("needs_read", "INTEGER DEFAULT 0"),
-                     ("offer_message", "TEXT DEFAULT ''"), ("eval_sig", "TEXT DEFAULT ''")):
+                     ("offer_message", "TEXT DEFAULT ''"), ("eval_sig", "TEXT DEFAULT ''"), ("listed_at", "INTEGER DEFAULT 0")):
         if col not in lc:
             cur.execute(f"ALTER TABLE listings ADD COLUMN {col} {ddl}")
     cur.execute("""CREATE TABLE IF NOT EXISTS price_snapshots (
