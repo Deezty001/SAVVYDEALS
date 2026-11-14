@@ -11,67 +11,41 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import re
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, validator
 
-from db import get_all_settings, get_conn, get_setting, init_db, utcnow_iso
-from evaluator import evaluate_listing
 import engine_ops
 import export_xlsx
 import pricing
-from queries import build_deep_queries
-from notifier import send_discord_alert, send_mac_notification, send_ntfy_alert, send_telegram_alert
-from scrapers import (
-    FB_FULL_SWEEP_QUERIES,
-    GUMTREE_LOCATIONS,
-    build_fb_marketplace_url,
-    inspect_facebook_item_details,
-    inspect_gumtree_item_details,
-    is_safe_image_url,
-    is_safe_listing_url,
-    scrape_facebook_exhaustive,
-    scrape_facebook_marketplace_au,
-    scrape_gumtree_au,
+import scanning
+from alerts import dispatch_auto_alerts
+from config import DEFAULT_FB_URL, INGEST_ORIGINS, LOCAL_ORIGINS, STATES, STATIC_DIR
+from db import get_conn, get_setting, init_db, session as db_session, utcnow_iso
+from evaluator import evaluate_listing
+from ingest import get_reference_parts, get_settings_dict, ingest_raw_listings, public_summary
+from models import (
+    IngestBatchPayload, QuickRegionUpdate, ReferencePriceUpdate, SettingsUpdate, SmartPasteInput,
+    StatusUpdateInput, PricesPayload,
 )
+from scanning import inspect_sem
+from notifier import send_discord_alert, send_telegram_alert
+from scrapers import GUMTREE_LOCATIONS, build_fb_marketplace_url, inspect_facebook_item_details, is_safe_listing_url
 
 log = logging.getLogger("app")
-BASE_DIR = Path(__file__).parent
-STATIC_DIR = BASE_DIR / "static"
-
-STATES = ("NSW", "VIC", "QLD", "WA", "SA", "ACT", "TAS", "NT")
-STATES_AND_ALL = STATES + ("ALL",)
-PORT = os.environ.get("DEALS_PORT", "8050")
-LOCAL_ORIGINS = [f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"]
-# Origins allowed to push listings (bookmarklet runs on the marketplace page itself).
-INGEST_ORIGINS = ["https://www.facebook.com", "https://www.gumtree.com.au"]
-MAX_INGEST_BATCH = 500
-DEFAULT_FB_URL = "https://www.facebook.com/marketplace/"
-
-scan_lock = asyncio.Lock()
-inspect_sem = asyncio.Semaphore(2)
-SWEEP_STATES = ("NSW", "VIC", "QLD", "WA", "SA", "ACT", "TAS")  # NT has no Gumtree / FB city mapping
-DEEP_CHUNK = 8  # queries per browser session; results are saved after every chunk
-scan_state: Dict[str, Any] = {"running": False, "mode": None, "last_run": None, "last_summary": None, "progress": None}
-deep_task: Optional["asyncio.Task[None]"] = None
-deep_cancel = asyncio.Event()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
     engine_ops.reevaluate_all()          # catalog / model changes apply to stored listings on startup
-    task = asyncio.create_task(scheduler_loop())
+    task = asyncio.create_task(scanning.scheduler_loop())
     try:
         yield
     finally:
@@ -110,6 +84,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Ingest-Token"],
 )
 
+app.include_router(scanning.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 CSP = (
@@ -122,329 +97,6 @@ CSP = (
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
-def get_settings_dict() -> Dict[str, str]:
-    return get_all_settings()
-
-
-def get_reference_parts() -> List[Dict[str, Any]]:
-    conn = get_conn()
-    try:
-        cur = conn.execute("SELECT * FROM reference_parts ORDER BY category, avg_used_aud DESC")
-        return [dict(r) for r in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-def _clip(value: Any, n: int) -> str:
-    return str(value if value is not None else "").strip()[:n]
-
-
-def source_for_url(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower()
-    return "Gumtree AU" if "gumtree" in host else "Facebook Marketplace"
-
-
-def ingest_raw_listings(raw_items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Validate, evaluate and store listings. Returns a summary incl. ids touched this run."""
-    settings = get_settings_dict()
-    try:
-        exclude_keywords = json.loads(settings.get("exclude_keywords", "[]"))
-    except ValueError:
-        exclude_keywords = []
-    ref_parts = get_reference_parts()
-    econ = pricing.Econ.from_settings(settings)
-
-    conn = get_conn()
-    cur = conn.cursor()
-    added = matched = steals = price_drops = rejected = 0
-    saved_ids: List[str] = []
-    now = utcnow_iso()
-
-    for item in raw_items[:MAX_INGEST_BATCH]:
-        try:
-            title = _clip(item.get("title"), 200)
-            desc = _clip(item.get("description"), 6000)
-            price_aud = float(item.get("price_aud") or 0)
-            url = _clip(item.get("url"), 500)
-            image_url = _clip(item.get("image_url"), 800)
-        except (TypeError, ValueError, AttributeError):
-            rejected += 1
-            continue
-
-        if not title or not (0 < price_aud < 1_000_000):
-            continue
-        if not is_safe_listing_url(url) or not is_safe_image_url(image_url):
-            rejected += 1
-            continue
-
-        lid = _clip(item.get("id"), 40)
-        if not re.fullmatch(r"[A-Za-z0-9_]{1,40}", lid or ""):
-            lid = "lst_" + hashlib.md5(url.encode()).hexdigest()[:12]
-
-        cur.execute(
-            "SELECT price_aud, description, posted_at, status, notified, discovered_at, alerted_price FROM listings WHERE id = ?",
-            (lid,),
-        )
-        existing = cur.fetchone()
-        posted_badge = _clip(item.get("posted_at"), 80) or "Live Ad"
-
-        if existing:
-            old_price = float(existing["price_aud"])
-            old_desc = existing["description"] or ""
-            if len(old_desc) > len(desc) and "[Deep Inspected]" in old_desc:
-                desc = old_desc
-            if price_aud < old_price:
-                posted_badge = f"📉 Dropped -${int(old_price - price_aud)} (Was ${int(old_price)})"
-                price_drops += 1
-            elif "Dropped" in (existing["posted_at"] or "") and "Dropped" not in posted_badge:
-                posted_badge = existing["posted_at"]
-
-        state = _clip(item.get("state") or settings.get("state", "NSW"), 4).upper()
-        if state not in STATES_AND_ALL:
-            state = settings.get("state", "NSW")
-        location = _clip(item.get("location") or settings.get("city", "Sydney"), 120)
-
-        eval_res = evaluate_listing(
-            title=title, description=desc, price_aud=price_aud, reference_parts=ref_parts,
-            exclude_keywords=exclude_keywords, econ=econ, location=location, state=state,
-            source=source_for_url(url),
-        )
-
-        if eval_res["excluded"] or eval_res["deal_tier"] == "UNMATCHED":
-            # A listing we already stored that now fails evaluation (edited, relisted, faulty) is hidden, not left stale.
-            if existing and existing["status"] != "HIDDEN":
-                cur.execute("UPDATE listings SET status = 'HIDDEN' WHERE id = ?", (lid,))
-            continue
-
-        matched += 1
-        if eval_res["deal_tier"] == "STEAL":
-            steals += 1
-
-        fp, relists = engine_ops.relist_info(cur, lid, title, price_aud)
-        if relists:
-            eval_res["flags"].append(f"relist_or_crosspost:{relists}")
-        vals = engine_ops.eval_to_row(eval_res)
-        vals["flags"] = ",".join(eval_res["flags"])
-        base = {
-            "id": lid, "source": source_for_url(url), "title": title, "description": desc,
-            "price_aud": price_aud, "location": location, "state": state, "url": url,
-            "image_url": image_url, "status": existing["status"] if existing else "NEW",
-            "notified": existing["notified"] if existing else 0, "posted_at": posted_badge,
-            "discovered_at": existing["discovered_at"] if existing else now,  # keep the first-seen time
-            "last_seen": now, "fingerprint": fp, "relist_count": relists, "gone_at": "",
-            "alerted_price": existing["alerted_price"] if existing else 0,
-        }
-        base.update(vals)
-        cols = ", ".join(base)
-        cur.execute(f"INSERT OR REPLACE INTO listings ({cols}) VALUES ({', '.join('?' * len(base))})",
-                    tuple(base.values()))
-        saved_ids.append(lid)
-        added += 1
-
-    conn.commit()
-    conn.close()
-    return {
-        "processed": len(raw_items),
-        "matched_deals": matched,
-        "steals": steals,
-        "price_drops": price_drops,
-        "saved": added,
-        "rejected": rejected,
-        "_saved_ids": saved_ids,
-    }
-
-
-def qualifies_for_alert(deal: Dict[str, Any], econ: pricing.Econ) -> bool:
-    """Only high-confidence deals that meet the profit AND return targets."""
-    flags = deal.get("flags") or ""
-    return (deal["deal_tier"] in ("STEAL", "GOOD_DEAL") and deal["confidence"] >= 65
-            and deal["net_profit_aud"] >= econ.min_net_profit and deal["roi_pct"] >= econ.min_roi_pct
-            and "interstate_pc" not in flags and not deal.get("needs_read") and not deal.get("gone_at"))
-
-
-async def dispatch_auto_alerts(saved_ids: List[str]) -> int:
-    """
-    Alert on qualifying deals: new ones, and ones that already existed but a price drop has
-    just made qualify (re-alert). Channels: Discord, Telegram, ntfy phone push, macOS.
-    """
-    s = get_settings_dict()
-    tier = s.get("auto_notify_tier", "GOOD_DEAL")
-    econ = pricing.Econ.from_settings(s)
-    has_discord = bool(s.get("discord_webhook_url"))
-    has_telegram = bool(s.get("telegram_bot_token") and s.get("telegram_chat_id"))
-    has_ntfy = bool(s.get("ntfy_topic"))
-    has_mac = s.get("mac_notify", "1") == "1"
-    if tier == "OFF" or not saved_ids or not (has_discord or has_telegram or has_ntfy or has_mac):
-        return 0
-    allowed = ("STEAL",) if tier == "STEAL" else ("STEAL", "GOOD_DEAL")
-
-    conn = get_conn()
-    marks = ",".join("?" * len(saved_ids))
-    rows = [dict(r) for r in conn.execute(
-        f"SELECT * FROM listings WHERE id IN ({marks}) AND status != 'HIDDEN' ORDER BY net_profit_aud DESC", saved_ids)]
-    conn.close()
-
-    sent = 0
-    for deal in rows:
-        if deal["deal_tier"] not in allowed or not qualifies_for_alert(deal, econ):
-            continue
-        reason = ""
-        if deal["notified"]:
-            # already alerted: only again if the price has dropped meaningfully since that alert
-            if not (deal["alerted_price"] and deal["price_aud"] <= deal["alerted_price"] * 0.95):
-                continue
-            reason = f"📉 PRICE DROP ${deal['alerted_price']:.0f} → ${deal['price_aud']:.0f}"
-        if sent >= 10:  # never flood the channel after a big first scan
-            break
-        ok_any = False
-        if has_discord:
-            ok_any |= (await send_discord_alert(s["discord_webhook_url"], deal, reason))[0]
-        if has_telegram:
-            ok_any |= (await send_telegram_alert(s["telegram_bot_token"], s["telegram_chat_id"], deal, reason))[0]
-        if has_ntfy:
-            ok_any |= (await send_ntfy_alert(s["ntfy_topic"], deal, reason))[0]
-        if has_mac:
-            ok_any |= (await send_mac_notification(deal, reason))[0]
-        if ok_any:
-            c = get_conn()
-            c.execute("UPDATE listings SET notified = 1, alerted_price = ? WHERE id = ?", (deal["price_aud"], deal["id"]))
-            c.commit()
-            c.close()
-            sent += 1
-    return sent
-
-
-def public_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in summary.items() if not k.startswith("_")}
-
-
-# --------------------------------------------------------------------------------------
-# Request models
-# --------------------------------------------------------------------------------------
-class SmartPasteInput(BaseModel):
-    raw_text: str = Field(..., max_length=8000)
-    source: str = "Facebook Marketplace"
-    url: str = DEFAULT_FB_URL
-    save_to_feed: bool = True
-
-
-class QuickRegionUpdate(BaseModel):
-    state: str
-
-    @validator("state")
-    def _state(cls, v: str) -> str:
-        v = v.upper()
-        if v not in STATES_AND_ALL:
-            raise ValueError("Unknown state")
-        return v
-
-
-class LiveScanRequest(BaseModel):
-    custom_query: Optional[str] = Field(None, max_length=80)
-    sources: List[str] = ["facebook", "gumtree"]
-    full_fb_sweep: bool = False
-
-    @validator("sources", each_item=True)
-    def _src(cls, v: str) -> str:
-        if v not in ("facebook", "gumtree"):
-            raise ValueError("Unknown source")
-        return v
-
-
-class DeepScanRequest(BaseModel):
-    include_gumtree: bool = True
-    max_pages_per_query: int = Field(25, ge=1, le=200)
-
-
-class StatusUpdateInput(BaseModel):
-    status: str
-
-    @validator("status")
-    def _status(cls, v: str) -> str:
-        if v not in ("NEW", "SAVED", "HIDDEN"):
-            raise ValueError("Invalid status")
-        return v
-
-
-class ReferencePriceUpdate(BaseModel):
-    avg_used_aud: float = Field(..., gt=0, lt=100000)
-    good_deal_aud: float = Field(..., gt=0, lt=100000)
-    steal_aud: float = Field(..., gt=0, lt=100000)
-
-    @validator("steal_aud")
-    def _order(cls, v: float, values: Dict[str, Any]) -> float:
-        good, avg = values.get("good_deal_aud"), values.get("avg_used_aud")
-        if good is not None and v > good:
-            raise ValueError("Steal price must be at or below Good Deal price")
-        if good is not None and avg is not None and good > avg:
-            raise ValueError("Good Deal price must be at or below the average")
-        return v
-
-
-class SettingsUpdate(BaseModel):
-    state: str
-    city: str = Field(..., max_length=60)
-    radius_km: int = Field(50, ge=1, le=500)
-    min_discount_pct: float = Field(20, ge=0, le=100)
-    min_profit_aud: float = Field(50, ge=0, le=100000)
-    auto_notify_tier: str = "GOOD_DEAL"
-    # None = leave the stored secret untouched; "" = clear it; anything else = replace it.
-    discord_webhook_url: Optional[str] = None
-    telegram_bot_token: Optional[str] = None
-    telegram_chat_id: Optional[str] = Field(None, max_length=40)
-    search_queries: List[str] = Field(..., max_items=60)
-    exclude_keywords: List[str] = Field(..., max_items=200)
-    # Engine / routing / alert extras (all optional: omitted = unchanged)
-    home_suburb: Optional[str] = Field(None, max_length=60)
-    min_roi_pct: Optional[float] = Field(None, ge=0, le=1000)
-    hourly_value_aud: Optional[float] = Field(None, ge=0, le=500)
-    cost_per_km_aud: Optional[float] = Field(None, ge=0, le=5)
-    gst_registered: Optional[bool] = None
-    mac_notify: Optional[bool] = None
-    scheduler_enabled: Optional[bool] = None
-    ntfy_topic: Optional[str] = Field(None, max_length=64)
-
-    @validator("ntfy_topic")
-    def _ntfy(cls, v: Optional[str]) -> Optional[str]:
-        if v and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", v):
-            raise ValueError("ntfy topic must be 8-64 letters, digits, _ or -")
-        return v
-
-    @validator("state")
-    def _state(cls, v: str) -> str:
-        v = v.upper()
-        if v not in STATES:
-            raise ValueError("Unknown state")
-        return v
-
-    @validator("auto_notify_tier")
-    def _tier(cls, v: str) -> str:
-        if v not in ("OFF", "STEAL", "GOOD_DEAL"):
-            raise ValueError("Invalid alert tier")
-        return v
-
-    @validator("discord_webhook_url")
-    def _discord(cls, v: Optional[str]) -> Optional[str]:
-        # Only real Discord webhooks: otherwise this endpoint is a way to make the server POST anywhere.
-        if v and not re.fullmatch(r"https://(?:canary\.|ptb\.)?(?:discord|discordapp)\.com/api/webhooks/\d+/[\w-]+", v):
-            raise ValueError("Not a valid Discord webhook URL")
-        return v
-
-    @validator("telegram_bot_token")
-    def _tg(cls, v: Optional[str]) -> Optional[str]:
-        if v and not re.fullmatch(r"\d{5,15}:[A-Za-z0-9_-]{30,60}", v):
-            raise ValueError("Not a valid Telegram bot token")
-        return v
-
-    @validator("search_queries", "exclude_keywords", each_item=True)
-    def _short(cls, v: str) -> str:
-        return v.strip()[:80]
-
-
-class IngestBatchPayload(BaseModel):
-    listings: List[Dict[str, Any]] = Field(..., max_items=MAX_INGEST_BATCH)
-
-
 # --------------------------------------------------------------------------------------
 # Pages
 # --------------------------------------------------------------------------------------
@@ -485,51 +137,60 @@ def list_deals(
     sort_by: str = "score",
     limit: int = 300,
 ) -> Dict[str, Any]:
-    conn = get_conn()
-    rows = [dict(r) for r in conn.execute(
-        "SELECT * FROM listings WHERE status != 'HIDDEN' ORDER BY deal_score DESC, discovered_at DESC")]
-    conn.close()
+    where, args = ["status != 'HIDDEN'"], []
+    if saved_only:
+        where.append("status = 'SAVED'")
+    if drops_only:
+        where.append("posted_at LIKE '%Dropped%'")
+    if tier and tier != "ALL":
+        if tier == "GOOD_OR_BETTER":
+            where.append("deal_tier IN ('STEAL','GOOD_DEAL')")
+        else:
+            where.append("deal_tier = ?")
+            args.append(tier)
+    if source and source != "ALL":
+        where.append("source = ?")
+        args.append(source)
+    if bundles_only:
+        where.append("is_bundle = 1")
+    if search:
+        like = "%" + search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(lower(title) LIKE ? ESCAPE '\\' OR lower(description) LIKE ? ESCAPE '\\' "
+                     "OR lower(location) LIKE ? ESCAPE '\\')")
+        args += [like, like, like]
+    series = socket_or_series if socket_or_series and socket_or_series != "ALL" else None
+    if series:
+        where.append("lower(matched_parts_json) LIKE ?")
+        args.append("%" + series.lower() + "%")
+    sort_sql = {
+        "profit": "profit_margin_aud DESC", "price_asc": "price_aud ASC", "price_desc": "price_aud DESC",
+        "discount": "discount_pct DESC", "newest": "discovered_at DESC",
+    }.get(sort_by, "deal_score DESC")
+    order = f"{sort_sql}, deal_score DESC, discovered_at DESC"
 
-    state_rows = [r for r in rows if matches_state(r, state or "ALL")]
-    filtered = []
-    for r in state_rows:
+    conn = get_conn()
+    # Light pass over every live listing for the region-scoped counters (no description / JSON columns).
+    light = [dict(r) for r in conn.execute(
+        "SELECT id, location, state, source, deal_tier, is_bundle, posted_at, status, profit_margin_aud "
+        "FROM listings WHERE status != 'HIDDEN'")]
+    state_rows = [r for r in light if matches_state(r, state or "ALL")]
+    in_state = {r["id"] for r in state_rows}
+    page, total, limit = [], 0, max(1, min(limit, 1000))
+    for row in conn.execute(f"SELECT * FROM listings WHERE {' AND '.join(where)} ORDER BY {order}", args):
+        if row["id"] not in in_state:
+            continue
+        r = dict(row)
         try:
             r["matched_parts"] = json.loads(r["matched_parts_json"])
         except ValueError:
             r["matched_parts"] = []
-        del r["matched_parts_json"]
-        if saved_only and r.get("status") != "SAVED":
+        if series and not any(series.lower() in p["socket_or_series"].lower() for p in r["matched_parts"]):
             continue
-        if drops_only and "Dropped" not in (r.get("posted_at") or ""):
-            continue
-        if tier and tier != "ALL":
-            if tier == "GOOD_OR_BETTER":
-                if r["deal_tier"] not in ("STEAL", "GOOD_DEAL"):
-                    continue
-            elif r["deal_tier"] != tier:
-                continue
-        if source and source != "ALL" and r["source"] != source:
-            continue
-        if bundles_only and not r["is_bundle"]:
-            continue
-        if socket_or_series and socket_or_series != "ALL":
-            if not any(socket_or_series.lower() in p["socket_or_series"].lower() for p in r["matched_parts"]):
-                continue
-        if search:
-            q = search.lower()
-            if q not in r["title"].lower() and q not in (r["description"] or "").lower() and q not in (r["location"] or "").lower():
-                continue
-        filtered.append(r)
-
-    sorters = {
-        "profit": (lambda x: x["profit_margin_aud"], True),
-        "price_asc": (lambda x: x["price_aud"], False),
-        "price_desc": (lambda x: x["price_aud"], True),
-        "discount": (lambda x: x["discount_pct"], True),
-        "newest": (lambda x: x["discovered_at"], True),
-    }
-    key, rev = sorters.get(sort_by, (lambda x: x["deal_score"], True))
-    filtered.sort(key=key, reverse=rev)
+        total += 1
+        if len(page) < limit:
+            del r["matched_parts_json"]
+            page.append(r)
+    conn.close()
 
     stats = {
         "total_deals": len(state_rows),
@@ -542,145 +203,7 @@ def list_deals(
         "saved_count": sum(1 for r in state_rows if r.get("status") == "SAVED"),
         "max_profit_aud": max((r["profit_margin_aud"] for r in state_rows), default=0.0),
     }
-    limit = max(1, min(limit, 1000))
-    return {"deals": filtered[:limit], "total_matching": len(filtered), "stats": stats}
-
-
-@app.get("/api/scan/status")
-def scan_status() -> Dict[str, Any]:
-    return scan_state
-
-
-@app.post("/api/scan/live")
-async def trigger_live_scan(payload: Optional[LiveScanRequest] = None) -> Dict[str, Any]:
-    """Scrape live Facebook / Gumtree listings, evaluate and store them. One scan at a time."""
-    if scan_lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running.")
-
-    async with scan_lock:
-        scan_state.update(running=True, mode="quick", progress=None)
-        try:
-            settings = get_settings_dict()
-            state = settings.get("state", "NSW")
-            radius_km = int(settings.get("radius_km", "50") or 50)
-
-            if payload and payload.custom_query and payload.custom_query.strip():
-                queries, include_newest = [payload.custom_query.strip()], True
-            elif payload and payload.full_fb_sweep:
-                queries, include_newest = FB_FULL_SWEEP_QUERIES, False
-            else:
-                queries, include_newest = [
-                    "rtx 3070", "rtx 3080", "rtx 4070", "rtx 4070 super", "rtx 4080",
-                    "rx 7800 xt", "7800x3d", "5800x3d", "9800x3d", "gaming pc rtx",
-                ], True
-
-            sources = payload.sources if (payload and payload.sources) else ["facebook", "gumtree"]
-            all_scraped: List[Dict[str, Any]] = []
-            errors: List[str] = []
-            gt_count = fb_count = 0
-
-            if "facebook" in sources:
-                fb_items = await scrape_facebook_marketplace_au(
-                    queries, state=state, max_per_query=24,
-                    include_newest_pass=include_newest, concurrency=6, errors=errors,
-                )
-                fb_count = len(fb_items)
-                all_scraped.extend(fb_items)
-
-            if "gumtree" in sources:
-                for q in queries[:8]:
-                    gt_items = await scrape_gumtree_au(q, state=state, radius_km=radius_km, max_results=16, errors=errors)
-                    gt_count += len(gt_items)
-                    all_scraped.extend(gt_items)
-
-            summary = ingest_raw_listings(all_scraped)
-            summary["alerts_sent"] = await dispatch_auto_alerts(summary["_saved_ids"])
-            result = public_summary(summary)
-            result.update({
-                "queries_run": queries,
-                "raw_scraped_count": len(all_scraped),
-                "gumtree_scraped": gt_count,
-                "facebook_scraped": fb_count,
-                "errors": sorted(set(errors))[:10],
-            })
-            scan_state["last_run"] = utcnow_iso()
-            scan_state["last_summary"] = result
-            return result
-        finally:
-            scan_state["running"] = False
-
-
-async def run_deep_scan(states: List[str], include_gumtree: bool, max_pages: int) -> None:
-    """Exhaustive sweep: every catalog-derived query split into price bands, saved chunk by chunk."""
-    async with scan_lock:
-        deep_cancel.clear()
-        settings = get_settings_dict()
-        radius_km = int(settings.get("radius_km", "50") or 50)
-        try:
-            extra = json.loads(settings.get("search_queries", "[]"))
-        except ValueError:
-            extra = []
-        queries = build_deep_queries(get_reference_parts(), extra)
-        chunks = [queries[i:i + DEEP_CHUNK] for i in range(0, len(queries), DEEP_CHUNK)]
-        prog = {"states": states, "state": states[0], "chunk": 0, "chunks_total": len(chunks) * len(states),
-                "queries_total": len(queries), "pages": 0, "listings_seen": 0, "matched": 0, "errors": [], "stopped": None}
-        scan_state.update(running=True, mode="deep", progress=prog)
-        started = utcnow_iso()
-        try:
-            for st in states:
-                prog["state"] = st
-                for chunk in chunks:
-                    if deep_cancel.is_set():
-                        prog["stopped"] = "Cancelled"
-                        return
-                    errors: List[str] = []
-                    page_stats: Dict[str, int] = {}
-                    items = await scrape_facebook_exhaustive(
-                        chunk, state=st, concurrency=6, max_pages_per_query=max_pages,
-                        errors=errors, stats=page_stats)
-                    prog["pages"] = prog.get("pages", 0) + page_stats.get("pages", 0)
-                    fb_seen = len(items)
-                    if include_gumtree:
-                        for q in chunk:
-                            if deep_cancel.is_set():
-                                break
-                            items += await scrape_gumtree_au(q, state=st, radius_km=radius_km, max_results=30,
-                                                             errors=errors, pages=3)
-                    summary = ingest_raw_listings(items)
-                    await dispatch_auto_alerts(summary["_saved_ids"])
-                    prog["chunk"] += 1
-                    prog["listings_seen"] += len(items)
-                    prog["matched"] += summary["matched_deals"]
-                    prog["errors"] = sorted(set(prog["errors"]) | set(errors))[:10]
-                    # Facebook is blocking us: stop instead of hammering it and risking the session.
-                    if fb_seen == 0 and any("login wall" in e for e in errors):
-                        prog["stopped"] = "Facebook is showing a login wall. Stopped to avoid getting blocked."
-                        return
-        except Exception as e:  # never let the background task die silently
-            log.exception("Deep scan crashed")
-            prog["stopped"] = f"Crashed: {type(e).__name__}"
-        finally:
-            scan_state.update(running=False, last_run=utcnow_iso(),
-                              last_summary={"started": started, **{k: prog[k] for k in ("listings_seen", "matched", "stopped")}})
-
-
-@app.post("/api/scan/deep", status_code=202)
-async def start_deep_scan(payload: Optional[DeepScanRequest] = None) -> Dict[str, Any]:
-    """Start an exhaustive background sweep. Poll /api/scan/status for progress."""
-    global deep_task
-    if scan_lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running.")
-    payload = payload or DeepScanRequest()
-    state = get_setting("state", "NSW")
-    states = list(SWEEP_STATES) if state == "ALL" else [state if state in SWEEP_STATES else "NSW"]
-    deep_task = asyncio.create_task(run_deep_scan(states, payload.include_gumtree, payload.max_pages_per_query))
-    return {"started": True, "states": states}
-
-
-@app.post("/api/scan/cancel")
-def cancel_scan() -> Dict[str, Any]:
-    deep_cancel.set()
-    return {"ok": True}
+    return {"deals": page, "total_matching": total, "stats": stats}
 
 
 @app.post("/api/deals/{deal_id}/inspect")
@@ -702,25 +225,18 @@ async def deep_inspect_deal(deal_id: str) -> Dict[str, Any]:
     if info.get("listed_time"):
         enriched_desc = f"{info['listed_time']} • {enriched_desc}"
 
-    econ, parts, exclude_keywords, _ = engine_ops.load_ctx()
+    econ, parts, exclude_keywords, _, csig = engine_ops.load_ctx_sig()
     eval_res = evaluate_listing(
         title=deal["title"], description=enriched_desc, price_aud=float(deal["price_aud"]),
         reference_parts=parts, exclude_keywords=exclude_keywords, econ=econ,
         location=deal["location"], state=deal["state"], source=deal["source"],
     )
-
-    conn = get_conn()
-    if eval_res["excluded"]:
-        conn.execute("UPDATE listings SET status = 'HIDDEN', description = ? WHERE id = ?", (enriched_desc, deal_id))
-        conn.commit()
-        conn.close()
+    sig = engine_ops.listing_sig(csig, deal["title"], enriched_desc, float(deal["price_aud"]),
+                                 deal["location"], deal["state"], deal["source"])
+    with db_session() as conn:
+        stored = engine_ops.apply_eval(conn, deal_id, eval_res, description=enriched_desc, clear_needs_read=True, sig=sig)
+    if not stored:
         return {"ok": True, "excluded": True, "message": f"Listing hidden after deep inspection ({eval_res['reason']})."}
-
-    vals = engine_ops.eval_to_row(eval_res)
-    sets = ", ".join(f"{k}=?" for k in vals)
-    conn.execute(f"UPDATE listings SET description=?, {sets} WHERE id=?", (enriched_desc, *vals.values(), deal_id))
-    conn.commit()
-    conn.close()
     return {
         "ok": True, "excluded": False, "full_description": enriched_desc,
         "matched_parts": eval_res["matched_parts"], "estimated_value_aud": eval_res["estimated_value_aud"],
@@ -958,16 +474,6 @@ def save_settings(payload: SettingsUpdate) -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------
 # Engine endpoints: prices, trends, trips, re-valuation
 # --------------------------------------------------------------------------------------
-class PriceUpdate(BaseModel):
-    part_id: Optional[int] = None
-    canonical_name: Optional[str] = Field(None, max_length=120)
-    new_retail_aud: float = Field(..., ge=0, le=100000)
-
-
-class PricesPayload(BaseModel):
-    prices: List[PriceUpdate] = Field(..., max_items=500)
-
-
 def _require_ingest_token(request: Request) -> None:
     import hmac
     expected = get_setting("ingest_token")
@@ -1015,147 +521,3 @@ def trips() -> Dict[str, Any]:
     return {"home_suburb": get_setting("home_suburb", "Sydney CBD"), "trips": engine_ops.plan_pickup_trips()}
 
 
-@app.post("/api/deep-read")
-async def deep_read(limit: int = 10) -> Dict[str, Any]:
-    return await auto_deep_read(max(1, min(limit, 30)))
-
-
-# --------------------------------------------------------------------------------------
-# Automatic deep reads, background scheduler
-# --------------------------------------------------------------------------------------
-async def auto_deep_read(limit: int = 8) -> Dict[str, Any]:
-    """Open the most promising low-confidence listings, re-value them from the full text, drop sold ones."""
-    conn = get_conn()
-    rows = [dict(r) for r in conn.execute(
-        "SELECT * FROM listings WHERE status!='HIDDEN' AND gone_at='' AND needs_read=1 "
-        "AND description NOT LIKE '%[Deep Inspected]%' ORDER BY net_profit_aud DESC LIMIT ?", (limit,))]
-    conn.close()
-    econ, parts, exclude_keywords, _ = engine_ops.load_ctx()
-    read = gone = promoted = 0
-    for deal in rows:
-        async with inspect_sem:
-            if "Gumtree" in deal["source"]:
-                info = await inspect_gumtree_item_details(deal["url"])
-            else:
-                info = await inspect_facebook_item_details(deal["url"])
-        if info.get("gone"):
-            engine_ops.mark_gone(deal["id"])
-            gone += 1
-            continue
-        text = info.get("full_description")
-        if not info.get("ok") or not text:
-            continue
-        read += 1
-        desc = f"[Deep Inspected] {text}"
-        res = evaluate_listing(deal["title"], desc, float(deal["price_aud"]), parts, exclude_keywords, econ,
-                               deal["location"], deal["state"], deal["source"])
-        c = get_conn()
-        if res["excluded"] or res["deal_tier"] == "UNMATCHED":
-            c.execute("UPDATE listings SET status='HIDDEN', description=? WHERE id=?", (desc, deal["id"]))
-        else:
-            vals = engine_ops.eval_to_row(res)
-            # a deep-read listing has had its full text read: it is no longer "needs read"
-            vals["needs_read"] = 0
-            if res["deal_tier"] in ("STEAL", "GOOD_DEAL", "OFFER"):
-                promoted += 1
-            sets = ", ".join(f"{k}=?" for k in vals)
-            c.execute(f"UPDATE listings SET description=?, {sets} WHERE id=?", (desc, *vals.values(), deal["id"]))
-        c.commit()
-        c.close()
-        await asyncio.sleep(1.5)
-    return {"candidates": len(rows), "read": read, "gone": gone, "now_deals": promoted}
-
-
-SCHED_BASE_S = 600           # newest-first pass every ~10 minutes
-SCHED_MAX_S = 7200
-sched_state: Dict[str, Any] = {"next_at": 0.0, "backoff": 0, "rotation": 0, "last_nightly": None, "last_note": ""}
-
-
-async def run_quick_pass(per_pass: int = 6) -> None:
-    """Newest-first pass over a rotating slice of the part searches (all parts covered over time)."""
-    if scan_lock.locked():
-        return
-    async with scan_lock:
-        scan_state.update(running=True, mode="auto", progress=None)
-        try:
-            settings = get_settings_dict()
-            state = settings.get("state", "NSW")
-            radius_km = int(settings.get("radius_km", "50") or 50)
-            try:
-                extra = json.loads(settings.get("search_queries", "[]"))
-            except ValueError:
-                extra = []
-            queries = build_deep_queries(get_reference_parts(), extra)
-            if not queries:
-                return
-            start = sched_state["rotation"] % len(queries)
-            batch = (queries + queries)[start:start + per_pass]
-            sched_state["rotation"] = start + per_pass
-            errors: List[str] = []
-            items = await scrape_facebook_marketplace_au(
-                batch, state=state if state != "ALL" else "NSW", max_per_query=24,
-                include_newest_pass=True, concurrency=3, errors=errors)
-            fb_seen = len(items)
-            for q in batch[:3]:
-                items += await scrape_gumtree_au(q, state=state if state != "ALL" else "NSW",
-                                                 radius_km=radius_km, max_results=16, errors=errors)
-            summary = ingest_raw_listings(items)
-            await dispatch_auto_alerts(summary["_saved_ids"])
-            if fb_seen == 0 and any("login wall" in e for e in errors):
-                sched_state["backoff"] = min(sched_state["backoff"] + 1, 5)   # double the wait each time
-                sched_state["last_note"] = "Facebook login wall: backing off"
-            else:
-                sched_state["backoff"] = 0
-                sched_state["last_note"] = f"ok: {len(items)} seen, {summary['matched_deals']} matched"
-            read = await auto_deep_read(5)
-            await dispatch_auto_alerts(summary["_saved_ids"])      # deals promoted by deep reads
-            engine_ops.mark_stale_gone()
-            scan_state["last_run"] = utcnow_iso()
-            scan_state["last_summary"] = {"auto": True, **public_summary(summary), "deep_read": read}
-        except Exception as e:
-            log.exception("Scheduled pass failed")
-            sched_state["backoff"] = min(sched_state["backoff"] + 1, 5)
-            sched_state["last_note"] = f"error: {type(e).__name__}"
-        finally:
-            scan_state["running"] = False
-
-
-async def run_nightly() -> None:
-    state = get_setting("state", "NSW")
-    states = list(SWEEP_STATES) if state == "ALL" else [state if state in SWEEP_STATES else "NSW"]
-    await run_deep_scan(states, True, 3)
-    engine_ops.mark_stale_gone()
-    engine_ops.learn_used_values()       # learn used values, snapshot prices, update trends
-    engine_ops.reevaluate_all()
-    await auto_deep_read(25)
-
-
-async def scheduler_loop() -> None:
-    import time
-    from datetime import datetime
-    while True:
-        try:
-            await asyncio.sleep(30)
-            if get_setting("scheduler_enabled", "0") != "1":
-                continue
-            now = datetime.now()
-            if now.hour == 2 and sched_state["last_nightly"] != now.date():
-                sched_state["last_nightly"] = now.date()
-                await run_nightly()
-                continue
-            if time.time() < sched_state["next_at"]:
-                continue
-            await run_quick_pass()
-            wait = min(SCHED_BASE_S * (2 ** sched_state["backoff"]), SCHED_MAX_S)
-            sched_state["next_at"] = time.time() + wait
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("Scheduler loop error")
-            await asyncio.sleep(60)
-
-
-@app.get("/api/scheduler")
-def scheduler_status() -> Dict[str, Any]:
-    return {"enabled": get_setting("scheduler_enabled", "0") == "1", **{
-        k: (str(v) if k == "last_nightly" else v) for k, v in sched_state.items()}}

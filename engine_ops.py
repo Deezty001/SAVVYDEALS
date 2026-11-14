@@ -2,6 +2,7 @@
 DB-side engine operations: context loading, re-valuation, learned prices + trends,
 sold/gone detection, deep reads and trip planning data.
 """
+import hashlib
 import json
 import statistics
 from datetime import datetime, timedelta
@@ -10,8 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import classify as clf
 import pricing
 import routing
-from db import get_all_settings, get_conn, utcnow_iso
-from evaluator import evaluate_listing
+from db import get_conn, utcnow_iso
+from evaluator import ENGINE_VERSION, evaluate_listing
 
 EVAL_COLS = (
     "is_bundle", "matched_parts_json", "estimated_value_aud", "profit_margin_aud", "discount_pct",
@@ -19,17 +20,69 @@ EVAL_COLS = (
     "kind", "flags", "strategy", "suburb", "drive_min", "travel_cost_aud", "needs_read", "offer_message",
 )
 
+_ctx_cache: Dict[str, Any] = {"sig": None, "val": None}
+
+
+def ctx_signature(conn) -> str:
+    """Cheap fingerprint of everything a valuation depends on (settings + the price guide)."""
+    parts = conn.execute(
+        "SELECT count(*), total(avg_used_aud + good_deal_aud + steal_aud + length(regex_patterns) + length(exclude_patterns) + "
+        "coalesce(new_retail_aud,0) + coalesce(learned_used_aud,0) + coalesce(learned_n,0) + coalesce(trend_pct,0)), "
+        "max(updated_at) FROM reference_parts").fetchone()
+    settings = json.dumps(sorted((r[0], r[1]) for r in conn.execute("SELECT key, value FROM settings")))
+    return hashlib.md5(f"{ENGINE_VERSION}|{tuple(parts)}|{settings}".encode()).hexdigest()
+
 
 def load_ctx() -> Tuple[pricing.Econ, List[Dict[str, Any]], List[str], Dict[str, str]]:
-    s = get_all_settings()
+    """(econ, parts, exclude keywords, settings). Cached until settings or the price guide change."""
+    return load_ctx_sig()[:4]
+
+
+def load_ctx_sig() -> Tuple[pricing.Econ, List[Dict[str, Any]], List[str], Dict[str, str], str]:
     conn = get_conn()
-    parts = [dict(r) for r in conn.execute("SELECT * FROM reference_parts")]
-    conn.close()
+    try:
+        sig = ctx_signature(conn)
+        if _ctx_cache["sig"] == sig:
+            return _ctx_cache["val"]
+        s = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
+        parts = [dict(r) for r in conn.execute("SELECT * FROM reference_parts ORDER BY category, avg_used_aud DESC")]
+    finally:
+        conn.close()
     try:
         ex = json.loads(s.get("exclude_keywords", "[]"))
     except ValueError:
         ex = []
-    return pricing.Econ.from_settings(s), parts, ex, s
+    val = (pricing.Econ.from_settings(s), parts, ex, s, sig)
+    _ctx_cache.update(sig=sig, val=val)
+    return val
+
+
+def listing_sig(ctx_sig: str, title: str, desc: str, price: float, location: str, state: str, source: str) -> str:
+    return hashlib.md5(f"{ctx_sig}|{title}|{desc}|{price}|{location}|{state}|{source}".encode()).hexdigest()
+
+
+def apply_eval(conn, listing_id: str, res: Dict[str, Any], *, description: Optional[str] = None,
+               clear_needs_read: bool = False, sig: str = "") -> bool:
+    """Store an evaluator result on an existing listing; hide it if it no longer qualifies.
+    Returns True if stored, False if hidden."""
+    if res["excluded"] or res["deal_tier"] == "UNMATCHED":
+        if description is None:
+            conn.execute("UPDATE listings SET status='HIDDEN' WHERE id=?", (listing_id,))
+        else:
+            conn.execute("UPDATE listings SET status='HIDDEN', description=? WHERE id=?", (description, listing_id))
+        return False
+    vals = eval_to_row(res)
+    rl = conn.execute("SELECT relist_count FROM listings WHERE id=?", (listing_id,)).fetchone()
+    if rl and rl[0] and "relist_or_crosspost" not in vals["flags"]:      # keep the relist flag set at ingest
+        vals["flags"] = ",".join(filter(None, [vals["flags"], f"relist_or_crosspost:{rl[0]}"]))
+    if clear_needs_read:
+        vals["needs_read"] = 0
+    vals["eval_sig"] = sig
+    if description is not None:
+        vals["description"] = description
+    sets = ", ".join(f"{k}=?" for k in vals)
+    conn.execute(f"UPDATE listings SET {sets} WHERE id=?", (*vals.values(), listing_id))
+    return True
 
 
 def eval_to_row(res: Dict[str, Any]) -> Dict[str, Any]:
@@ -47,26 +100,26 @@ def eval_to_row(res: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def reevaluate_all() -> Dict[str, int]:
-    """Re-value every stored listing (run whenever prices, settings or the catalog change)."""
-    econ, parts, ex, _ = load_ctx()
+def reevaluate_all(force: bool = False) -> Dict[str, int]:
+    """Re-value stored listings. Rows whose text, price and pricing context are unchanged are skipped."""
+    econ, parts, ex, _, csig = load_ctx_sig()
     conn = get_conn()
     rows = [dict(r) for r in conn.execute("SELECT * FROM listings WHERE status != 'HIDDEN'")]
-    changed = hidden = 0
+    changed = hidden = skipped = 0
     for r in rows:
+        sig = listing_sig(csig, r["title"], r["description"] or "", r["price_aud"], r["location"], r["state"], r["source"])
+        if not force and r.get("eval_sig") == sig:
+            skipped += 1
+            continue
         res = evaluate_listing(r["title"], r["description"] or "", r["price_aud"], parts, ex, econ,
                                r["location"], r["state"], r["source"])
-        if res["excluded"] or res["deal_tier"] == "UNMATCHED":
-            conn.execute("UPDATE listings SET status='HIDDEN' WHERE id=?", (r["id"],))
+        if apply_eval(conn, r["id"], res, sig=sig):
+            changed += 1
+        else:
             hidden += 1
-            continue
-        vals = eval_to_row(res)
-        sets = ", ".join(f"{k}=?" for k in vals)
-        conn.execute(f"UPDATE listings SET {sets} WHERE id=?", (*vals.values(), r["id"]))
-        changed += 1
     conn.commit()
     conn.close()
-    return {"revalued": changed, "hidden": hidden}
+    return {"revalued": changed, "hidden": hidden, "skipped": skipped}
 
 
 def set_prices(updates: List[Dict[str, Any]]) -> Dict[str, Any]:

@@ -5,7 +5,7 @@ Replaces "guide value minus asking price" with what you actually keep after sell
 warranty reserve, your time and GST on the margin (margin scheme: GST = margin / 11).
 """
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 @dataclass

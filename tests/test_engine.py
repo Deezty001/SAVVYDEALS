@@ -210,5 +210,65 @@ class Messages(unittest.TestCase):
         self.assertNotIn("http", m)
 
 
+class Store(unittest.TestCase):
+    """Shared evaluate-and-store path, skip-if-unchanged re-valuation, SQL-side filtering."""
+
+    @classmethod
+    def setUpClass(cls):
+        ctx()
+        import db
+        import engine_ops
+        cls.db, cls.ops = db, engine_ops
+        import ingest
+        ingest.ingest_raw_listings([
+            {"id": "t1", "title": "RTX 3070 graphics card", "price_aud": 380, "url": "https://www.gumtree.com.au/s-ad/x/1",
+             "location": "Newtown, NSW", "state": "NSW"},
+            {"id": "t2", "title": "Ryzen 7 5800X cpu", "price_aud": 150, "url": "https://www.facebook.com/marketplace/item/2/",
+             "location": "Parramatta, NSW", "state": "NSW"},
+        ])
+
+    def test_unchanged_listings_are_skipped(self):
+        self.ops.reevaluate_all()
+        r = self.ops.reevaluate_all()
+        self.assertEqual(r["revalued"], 0)
+        self.assertGreaterEqual(r["skipped"], 2)
+
+    def test_price_change_invalidates_skip(self):
+        self.ops.reevaluate_all()
+        conn = self.db.get_conn()
+        conn.execute("UPDATE reference_parts SET new_retail_aud=new_retail_aud+1 WHERE canonical_name LIKE '%3070%'")
+        conn.execute("UPDATE reference_parts SET avg_used_aud=avg_used_aud+1 WHERE canonical_name LIKE '%3070%'")
+        conn.commit()
+        conn.close()
+        self.assertGreaterEqual(self.ops.reevaluate_all()["revalued"], 2)
+
+    def test_relist_flag_survives_revaluation(self):
+        conn = self.db.get_conn()
+        conn.execute("UPDATE listings SET relist_count=2 WHERE id='t1'")
+        conn.commit()
+        conn.close()
+        self.ops.reevaluate_all(force=True)
+        conn = self.db.get_conn()
+        flags = conn.execute("SELECT flags FROM listings WHERE id='t1'").fetchone()[0]
+        conn.close()
+        self.assertIn("relist_or_crosspost:2", flags)
+
+    def test_deals_endpoint_filters_in_sql(self):
+        from fastapi.testclient import TestClient
+        import app
+        with TestClient(app.app, base_url="http://127.0.0.1") as c:
+            allr = c.get("/api/deals", params={"state": "ALL"}).json()
+            self.assertGreaterEqual(allr["total_matching"], 2)
+            gt = c.get("/api/deals", params={"state": "ALL", "source": "Gumtree AU"}).json()
+            self.assertTrue(all(d["source"] == "Gumtree AU" for d in gt["deals"]))
+            s = c.get("/api/deals", params={"state": "ALL", "search": "ryzen"}).json()
+            self.assertEqual([d["id"] for d in s["deals"]], ["t2"])
+            self.assertEqual(c.get("/api/deals", params={"state": "ALL", "search": "50%"}).json()["total_matching"], 0)
+            lim = c.get("/api/deals", params={"state": "ALL", "limit": 1, "sort_by": "price_desc"}).json()
+            self.assertEqual(len(lim["deals"]), 1)
+            self.assertEqual(lim["deals"][0]["id"], "t1")
+            self.assertEqual(lim["total_matching"], allr["total_matching"])
+
+
 if __name__ == "__main__":
     unittest.main()

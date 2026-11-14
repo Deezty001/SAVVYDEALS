@@ -7,6 +7,7 @@ listing text -> matched parts -> used value (capped at new retail, trend-adjuste
 """
 import json
 import re
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import classify as clf
@@ -44,6 +45,15 @@ BARE_GPU = re.compile(
     r"(?!\s*(?:mhz|mt|gb|w\b|hz|cl|\$|fps|k\b))", re.I)
 
 
+ENGINE_VERSION = "2"   # bump when valuation logic changes: stored listings are then re-valued once
+
+
+@lru_cache(maxsize=None)
+def _rx(pattern: str) -> "re.Pattern[str]":
+    """Compiled, case-insensitive pattern, cached for the life of the process (re's own cache holds only 512)."""
+    return re.compile(pattern, re.I)
+
+
 def _contains_term(text_lower: str, term: str) -> bool:
     term = term.strip().lower()
     if not term:
@@ -64,13 +74,18 @@ def is_excluded_listing(text: str, exclude_keywords: List[str]) -> bool:
     return any(_contains_term(text_lower, kw) for kw in exclude_keywords)
 
 
-def _load(v: Any) -> List[str]:
+@lru_cache(maxsize=None)
+def _load_json(v: str) -> Tuple[str, ...]:
+    try:
+        return tuple(json.loads(v))
+    except ValueError:
+        return ()
+
+
+def _load(v: Any) -> Tuple[str, ...]:
     if isinstance(v, str):
-        try:
-            return json.loads(v)
-        except ValueError:
-            return []
-    return v or []
+        return _load_json(v)
+    return tuple(v or ())
 
 
 def _result(tier: str, reason: str = "", excluded: bool = False, **extra: Any) -> Dict[str, Any]:
@@ -152,11 +167,11 @@ def evaluate_listing(
     def consider(part: Dict[str, Any], haystack: str, title_hay: str) -> None:
         pats = _load(part["regex_patterns"])
         exs = _load(part.get("exclude_patterns", "[]"))
-        if any(re.search(ep, haystack, re.I) for ep in exs):
+        if any(_rx(ep).search(haystack) for ep in exs):
             return
-        if not any(re.search(p, haystack, re.I) for p in pats):
+        if not any(_rx(p).search(haystack) for p in pats):
             return
-        in_title = any(re.search(p, title_hay, re.I) for p in pats)
+        in_title = any(_rx(p).search(title_hay) for p in pats)
         candidates.setdefault(part["category"], []).append((in_title, part))
 
     for part in reference_parts:

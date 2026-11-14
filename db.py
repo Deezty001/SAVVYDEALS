@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
@@ -18,6 +19,17 @@ SECRET_KEYS = ("discord_webhook_url", "telegram_bot_token", "ingest_token", "ntf
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+
+@contextmanager
+def session():
+    """Connection that commits on success and always closes."""
+    conn = get_conn()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -119,7 +131,7 @@ def init_db() -> None:
                      ("travel_cost_aud", "REAL DEFAULT 0"), ("alerted_price", "REAL DEFAULT 0"),
                      ("gone_at", "TEXT DEFAULT ''"), ("fingerprint", "TEXT DEFAULT ''"),
                      ("relist_count", "INTEGER DEFAULT 0"), ("needs_read", "INTEGER DEFAULT 0"),
-                     ("offer_message", "TEXT DEFAULT ''")):
+                     ("offer_message", "TEXT DEFAULT ''"), ("eval_sig", "TEXT DEFAULT ''")):
         if col not in lc:
             cur.execute(f"ALTER TABLE listings ADD COLUMN {col} {ddl}")
     cur.execute("""CREATE TABLE IF NOT EXISTS price_snapshots (
@@ -127,6 +139,8 @@ def init_db() -> None:
         PRIMARY KEY (part_id, day))""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_score ON listings(deal_score DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_tier ON listings(deal_tier)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_listings_discovered ON listings(discovered_at DESC)")
 
     default_settings = {
         "state": "NSW",

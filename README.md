@@ -54,6 +54,14 @@ Discord, Telegram, ntfy (phone push: set an unguessable topic, install the ntfy 
 
 Turn on `scheduler_enabled` (Settings API). It runs a newest-first pass every ~10 minutes over a rotating slice of part searches, deep-reads promising low-confidence ads, detects removed ads, backs off when Facebook shows a login wall, and runs a deep scan + price learning nightly at 2am while the server is running.
 
+## Code layout
+- `app.py`: FastAPI wiring, security middleware, deal / catalog / settings / engine routes.
+- `scanning.py`: live and deep scans, automatic deep reads, the background scheduler (its own router).
+- `ingest.py`, `alerts.py`, `models.py`, `config.py`: storing scraped listings, alert delivery, request models, constants.
+- `evaluator.py`, `pricing.py`, `classify.py`, `routing.py`, `messages.py`: the valuation engine (pure functions).
+- `engine_ops.py`: database side of the engine: cached context, `apply_eval`, skip-if-unchanged re-valuation, learned prices, trends.
+- Bump `ENGINE_VERSION` in `evaluator.py` when valuation logic changes; stored listings are re-valued once on next start.
+
 ## Tests
 
 ```bash
