@@ -5,15 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>AU PC Deals · Sign in</title>
+  <title>PC Deal Sniper · Sign in</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body class="login-body">
-  <form class="login-card" method="post" action="/login">
-    <span class="brand">AU PC Deals</span>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" class="input" autocomplete="current-password" required autofocus />
-    <button class="btn primary" type="submit">Sign in</button>
+<body>
+<div class="sa login-wrap">
+  <form class="sa-card login-card" method="post" action="/login">
+    <div class="brand"><span class="sa-logo" aria-hidden="true">S</span><span>PC Deal Sniper</span></div>
+    <!--ERR-->
+    <label class="sa-field">Password
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+    </label>
+    <button class="sa-btn sa-btn-primary login-btn" type="submit">Sign in</button>
   </form>
+</div>
 </body>
 </html>

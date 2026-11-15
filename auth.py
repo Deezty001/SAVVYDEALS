@@ -11,7 +11,7 @@ import urllib.parse
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from config import DASHBOARD_PASSWORD, PUBLIC_URL, STATIC_DIR
 from db import get_conn, get_setting
@@ -19,6 +19,7 @@ from db import get_conn, get_setting
 COOKIE = "deals_session"
 SESSION_SECONDS = 30 * 24 * 3600
 OPEN_PATHS = {"/login", "/api/ingest", "/static/style.css", "/healthz"}
+OPEN_PREFIXES = ("/static/fonts/",)  # the login page needs its fonts
 MAX_FAILS, FAIL_WINDOW = 8, 15 * 60
 
 router = APIRouter()
@@ -54,7 +55,7 @@ def valid_session(token: Optional[str]) -> bool:
 
 
 def is_open(path: str) -> bool:
-    return not enabled() or path in OPEN_PATHS
+    return not enabled() or path in OPEN_PATHS or path.startswith(OPEN_PREFIXES)
 
 
 def deny(request: Request) -> Response:
@@ -76,10 +77,12 @@ def _throttled(ip: str) -> bool:
 
 
 @router.get("/login", include_in_schema=False)
-def login_page() -> Response:
-    resp = FileResponse(STATIC_DIR / "login.html")
-    resp.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'"
-    return resp
+def login_page(request: Request) -> Response:
+    err = request.query_params.get("e")
+    msg = {"1": "Wrong password.", "locked": "Too many attempts. Try again in a few minutes."}.get(err or "", "")
+    html = (STATIC_DIR / "login.html").read_text(encoding="utf-8")
+    html = html.replace("<!--ERR-->", f'<div class="sa-banner" data-alert><b>{msg}</b></div>' if msg else "")
+    return HTMLResponse(html, headers={"Content-Security-Policy": "default-src 'none'; style-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'"})
 
 
 @router.post("/login", include_in_schema=False)

@@ -4,173 +4,189 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
-  <title>AU PC Deals</title>
+  <title>PC Deal Sniper</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+<div class="sa">
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <span class="brand">AU PC Deals</span>
-    <select id="region" class="select" aria-label="Region">
-      <option value="NSW">NSW · Sydney</option>
-      <option value="VIC">VIC · Melbourne</option>
-      <option value="QLD">QLD · Brisbane</option>
-      <option value="WA">WA · Perth</option>
-      <option value="SA">SA · Adelaide</option>
-      <option value="ACT">ACT · Canberra</option>
-      <option value="TAS">TAS · Hobart</option>
-      <option value="ALL">All Australia</option>
-    </select>
-    <span class="spacer"></span>
-    <button class="btn" data-open="pasteDlg">Check an ad</button>
-    <button class="btn" data-open="catalogDlg">Price guide</button>
-    <button class="btn" data-open="healthDlg" id="healthBtn" title="Is Facebook / Gumtree collection working?"><span class="dot idle" id="healthDot"></span><span id="healthLabel">Scan health</span></button>
-    <button class="btn" data-open="settingsDlg">Settings</button>
-    <button class="btn" id="autoBtn" aria-pressed="false" title="Re-scan Facebook every 5 minutes while this tab is open">Auto: off</button>
-    <a class="btn" href="/api/export.xlsx" download>Export Excel</a>
-    <button class="btn" id="deepBtn" title="Search every part we can value, scrolling deep. Takes a while; runs in the background.">Deep scan</button>
-    <button class="btn primary" id="scanBtn">Scan now</button>
+<header class="sa-topbar">
+  <div class="brand"><span class="sa-logo" aria-hidden="true">S</span><span>PC Deal Sniper</span></div>
+  <div class="sa-topbar-right">
+    <button class="sa-btn sa-btn-ghost sa-btn-sm" data-open="pasteDlg" title="Check an ad">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9zM8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/></svg><span class="lbl">Check an ad</span></button>
+    <button class="sa-btn sa-btn-ghost sa-btn-sm" data-open="catalogDlg" title="Price guide">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"/></svg><span class="lbl">Price guide</span></button>
+    <button class="sa-btn sa-btn-ghost sa-btn-sm" data-open="healthDlg" id="healthBtn" title="Is Facebook / Gumtree collection working?">
+      <span class="dot" id="healthDot"></span><span class="lbl" id="healthLabel">Scan health</span></button>
+    <a class="sa-icon-btn" href="/api/export.xlsx" download aria-label="Export Excel" title="Export Excel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></a>
+    <button class="sa-icon-btn" data-open="settingsDlg" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
+    <button class="sa-icon-btn" id="themeBtn" aria-label="Toggle theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <button class="sa-btn sa-btn-outline sa-btn-sm" id="autoBtn" data-gap aria-pressed="false" title="Re-scan Facebook every 5 minutes while this tab is open" ><span class="switch-label">Auto: off</span></button>
+    <button class="sa-btn sa-btn-outline sa-btn-sm" id="deepBtn" title="Search every part we can value, scrolling deep. Takes a while; runs in the background.">Deep scan</button>
+    <button class="sa-btn sa-btn-primary" id="scanBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg><span id="scanLabel">Scan now</span></button>
   </div>
 </header>
 
-<main>
-  <div class="page-head">
-    <h1 id="heading">Deals</h1>
-    <span class="muted" id="subhead"></span>
+<main class="sa-content">
+  <div class="list-title">
+    <div><h1><span id="heading">Deals</span></h1><p id="subhead">Loading…</p></div>
   </div>
 
-  <div id="progress" class="progress hidden" role="status"></div>
-  <div id="banner" class="banner hidden" role="status"></div>
+  <div id="progress" class="sa-banner hidden" role="status"></div>
+  <div id="banner" class="sa-banner hidden" data-alert role="status"></div>
 
-  <div class="tabs" role="tablist" aria-label="Deal views" id="tabs">
-    <button class="tab" role="tab" data-view="all" aria-selected="true">All <span class="count" id="c-all">0</span></button>
-    <button class="tab" role="tab" data-view="STEAL" aria-selected="false">Steals <span class="count" id="c-steal">0</span></button>
-    <button class="tab" role="tab" data-view="GOOD_OR_BETTER" aria-selected="false">Good or better <span class="count" id="c-good">0</span></button>
-    <button class="tab" role="tab" data-view="OFFER" aria-selected="false">Offers</button>
-    <button class="tab" role="tab" data-view="drops" aria-selected="false">Price drops <span class="count" id="c-drops">0</span></button>
-    <button class="tab" role="tab" data-view="bundles" aria-selected="false">Full PCs &amp; combos <span class="count" id="c-bundles">0</span></button>
-    <button class="tab" role="tab" data-view="saved" aria-selected="false">Saved <span class="count" id="c-saved">0</span></button>
+  <div class="sa-card sa-card-list">
+    <div class="sa-toolbar">
+      <div class="sa-tabs-wrap"><div class="sa-tabs" role="tablist" aria-label="Deal views" id="tabs">
+        <button class="sa-tab" role="tab" data-view="all" aria-selected="true">All <span class="n" id="c-all">0</span></button>
+        <button class="sa-tab" role="tab" data-view="STEAL" aria-selected="false">Steals <span class="n" id="c-steal">0</span></button>
+        <button class="sa-tab" role="tab" data-view="GOOD_OR_BETTER" aria-selected="false">Good or better <span class="n" id="c-good">0</span></button>
+        <button class="sa-tab" role="tab" data-view="OFFER" aria-selected="false">Make an offer</button>
+        <button class="sa-tab" role="tab" data-view="drops" aria-selected="false">Price drops <span class="n" id="c-drops">0</span></button>
+        <button class="sa-tab" role="tab" data-view="bundles" aria-selected="false">Full PCs <span class="n" id="c-bundles">0</span></button>
+        <button class="sa-tab" role="tab" data-view="saved" aria-selected="false">Saved <span class="n" id="c-saved">0</span></button>
+      </div></div>
+      <label class="sa-filter">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Filter listings, or Enter to scan" aria-label="Search listings" />
+      </label>
+    </div>
+    <div class="sa-filterbar">
+      <select id="region" class="sa-select" aria-label="Region">
+        <option value="NSW">NSW · Sydney</option>
+        <option value="VIC">VIC · Melbourne</option>
+        <option value="QLD">QLD · Brisbane</option>
+        <option value="WA">WA · Perth</option>
+        <option value="SA">SA · Adelaide</option>
+        <option value="ACT">ACT · Canberra</option>
+        <option value="TAS">TAS · Hobart</option>
+        <option value="ALL">All Australia</option>
+      </select>
+      <select id="source" class="sa-select" aria-label="Marketplace">
+        <option value="ALL">All marketplaces</option>
+        <option value="Facebook Marketplace">Facebook</option>
+        <option value="Gumtree AU">Gumtree</option>
+      </select>
+      <select id="series" class="sa-select" aria-label="Hardware">
+        <option value="ALL">All hardware</option>
+        <option>RTX 2000</option><option>RTX 3000</option><option>RTX 4000</option><option>RTX 5000</option>
+        <option>RX 6000</option><option>RX 7000</option><option>RX 9000</option>
+        <option>AM4</option><option>AM5</option><option>LGA1700</option><option>LGA1851</option>
+      </select>
+      <select id="sort" class="sa-select" aria-label="Sort">
+        <option value="score">Best deal</option>
+        <option value="profit">Biggest saving</option>
+        <option value="newest">Newest</option>
+        <option value="price_asc">Price: low to high</option>
+        <option value="price_desc">Price: high to low</option>
+      </select>
+      <span class="sa-filterbar-end" id="shown"></span>
+    </div>
+    <div id="list" aria-live="polite"></div>
   </div>
-
-  <div class="filters">
-    <input id="search" class="input search" type="search" placeholder="Filter listings, or type a part and press Enter to scan it live" aria-label="Search listings" />
-    <select id="source" class="select" aria-label="Marketplace">
-      <option value="ALL">All marketplaces</option>
-      <option value="Facebook Marketplace">Facebook</option>
-      <option value="Gumtree AU">Gumtree</option>
-    </select>
-    <select id="series" class="select" aria-label="Hardware">
-      <option value="ALL">All hardware</option>
-      <option>RTX 2000</option><option>RTX 3000</option><option>RTX 4000</option><option>RTX 5000</option>
-      <option>RX 6000</option><option>RX 7000</option><option>RX 9000</option>
-      <option>AM4</option><option>AM5</option><option>LGA1700</option><option>LGA1851</option>
-    </select>
-    <select id="sort" class="select" aria-label="Sort">
-      <option value="score">Best deal</option>
-      <option value="profit">Biggest saving</option>
-      <option value="newest">Newest</option>
-      <option value="price_asc">Price: low to high</option>
-      <option value="price_desc">Price: high to low</option>
-    </select>
-  </div>
-
-  <div class="list" id="list" aria-live="polite"></div>
 </main>
+</div>
 
 <!-- Check an ad -->
-<dialog id="pasteDlg" aria-labelledby="pasteTitle">
+<dialog class="sa sa-dialog" id="pasteDlg" aria-labelledby="pasteTitle">
   <div class="dlg-head">
     <div><h2 id="pasteTitle">Check an ad</h2><p>Paste a Facebook or Gumtree listing (with the price) to value it.</p></div>
-    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+    <button class="sa-icon-btn" data-close aria-label="Close">✕</button>
   </div>
   <div class="dlg-body">
-    <textarea id="pasteText" class="textarea" rows="5" placeholder="$1,150 – Gaming PC RTX 4070 Super, Ryzen 7 7800X3D, B650, 32GB DDR5, 1TB NVMe"></textarea>
+    <textarea id="pasteText" class="sa-input" rows="5" placeholder="$1,150 – Gaming PC RTX 4070 Super, Ryzen 7 7800X3D, B650, 32GB DDR5, 1TB NVMe"></textarea>
     <div class="grid2 auto-right">
-      <input id="pasteUrl" class="input" type="url" placeholder="Optional: listing link (facebook.com or gumtree.com.au)" />
-      <button class="btn primary" id="pasteGo">Evaluate</button>
+      <input id="pasteUrl" class="sa-input" type="url" placeholder="Optional: listing link (facebook.com or gumtree.com.au)" />
+      <button class="sa-btn sa-btn-primary" id="pasteGo">Evaluate</button>
     </div>
     <div id="pasteResult" class="hidden"></div>
   </div>
 </dialog>
 
 <!-- Price guide -->
-<dialog id="catalogDlg" aria-labelledby="catalogTitle">
+<dialog class="sa sa-dialog wide" id="catalogDlg" aria-labelledby="catalogTitle">
   <div class="dlg-head">
     <div><h2 id="catalogTitle">Used price guide</h2><p>Reference prices (AUD) every listing is valued against. Steal ≤ Good ≤ Average.</p></div>
-    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+    <button class="sa-icon-btn" data-close aria-label="Close">✕</button>
   </div>
   <div class="dlg-body">
-    <input id="catalogSearch" class="input" type="search" placeholder="Search parts, e.g. 4070 Super, 7800X3D" aria-label="Search parts" />
-    <table class="catalog">
-      <thead><tr><th>Part</th><th>Average</th><th>Good ≤</th><th>Steal ≤</th><th></th></tr></thead>
-      <tbody id="catalogBody"></tbody>
-    </table>
+    <input id="catalogSearch" class="sa-input" type="search" placeholder="Search parts, e.g. 4070 Super, 7800X3D" aria-label="Search parts" />
+    <div class="catalog-wrap">
+      <table class="sa-table">
+        <thead><tr><th>Part</th><th>Average</th><th>Good ≤</th><th>Steal ≤</th><th></th></tr></thead>
+        <tbody id="catalogBody"></tbody>
+      </table>
+    </div>
   </div>
 </dialog>
 
 <!-- Scan health -->
-<dialog id="healthDlg" aria-labelledby="healthTitle">
+<dialog class="sa sa-dialog" id="healthDlg" aria-labelledby="healthTitle">
   <div class="dlg-head">
     <div><h2 id="healthTitle">Scan health</h2><p>Whether listings are actually being collected, per marketplace.</p></div>
-    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+    <button class="sa-icon-btn" data-close aria-label="Close">✕</button>
   </div>
   <div class="dlg-body" id="healthBody"></div>
 </dialog>
 
 <!-- Settings -->
-<dialog id="settingsDlg" aria-labelledby="settingsTitle">
+<dialog class="sa sa-dialog wide" id="settingsDlg" aria-labelledby="settingsTitle">
   <div class="dlg-head">
     <div><h2 id="settingsTitle">Settings</h2><p>Region, alerts and search preferences.</p></div>
-    <button class="btn ghost sm" data-close aria-label="Close">✕</button>
+    <button class="sa-icon-btn" data-close aria-label="Close">✕</button>
   </div>
   <form class="dlg-body" id="settingsForm" autocomplete="off">
     <div class="grid3">
-      <label class="field">State
-        <select id="setState" class="select block">
+      <label class="sa-field">State
+        <select id="setState" class="sa-select">
           <option>NSW</option><option>VIC</option><option>QLD</option><option>WA</option>
           <option>SA</option><option>ACT</option><option>TAS</option><option>NT</option>
         </select>
       </label>
-      <label class="field">City<input id="setCity" class="input" maxlength="60" /></label>
-      <label class="field">Gumtree radius (km)<input id="setRadius" class="input" type="number" min="1" max="500" /></label>
+      <label class="sa-field">City<input id="setCity" maxlength="60" /></label>
+      <label class="sa-field">Gumtree radius (km)<input id="setRadius" type="number" min="1" max="500" /></label>
     </div>
 
     <div class="section-title">Alerts</div>
     <div class="grid3">
-      <label class="field">Alert on
-        <select id="setTier" class="select block">
+      <label class="sa-field">Alert on
+        <select id="setTier" class="sa-select">
           <option value="GOOD_DEAL">Good deals &amp; steals</option>
           <option value="STEAL">Steals only</option>
           <option value="OFF">Off</option>
         </select>
       </label>
-      <label class="field">Min. discount %<input id="setDisc" class="input" type="number" min="0" max="100" /></label>
-      <label class="field">Min. saving $<input id="setProfit" class="input" type="number" min="0" /></label>
+      <label class="sa-field">Min. discount %<input id="setDisc" type="number" min="0" max="100" /></label>
+      <label class="sa-field">Min. saving $<input id="setProfit" type="number" min="0" /></label>
     </div>
-    <label class="field">Discord webhook
-      <input id="setDiscord" class="input" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…" />
-      <div class="secret-note" id="discordNote"></div>
+    <label class="sa-field">Discord webhook
+      <input id="setDiscord" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…" />
+      <span class="secret-note" id="discordNote"></span>
     </label>
     <div class="grid2">
-      <label class="field">Telegram bot token
-        <input id="setTgToken" class="input" type="password" autocomplete="off" placeholder="123456:ABC…" />
-        <div class="secret-note" id="tgNote"></div>
+      <label class="sa-field">Telegram bot token
+        <input id="setTgToken" type="password" autocomplete="off" placeholder="123456:ABC…" />
+        <span class="secret-note" id="tgNote"></span>
       </label>
-      <label class="field">Telegram chat ID<input id="setTgChat" class="input" /></label>
+      <label class="sa-field">Telegram chat ID<input id="setTgChat" /></label>
     </div>
 
     <div class="section-title">Search</div>
-    <label class="field">Default queries (comma separated)<textarea id="setQueries" class="textarea" rows="2"></textarea></label>
-    <label class="field">Excluded keywords (comma separated)<textarea id="setExcludes" class="textarea" rows="2"></textarea></label>
+    <label class="sa-field">Default queries (comma separated)<textarea id="setQueries" rows="2"></textarea></label>
+    <label class="sa-field">Excluded keywords (comma separated)<textarea id="setExcludes" rows="2"></textarea></label>
 
     <div class="section-title">Facebook bookmarklet</div>
-    <p class="muted note">Drag this to your bookmarks bar, then click it on a Facebook Marketplace search page to send the listings here. Facebook may block it; the Playwright scanner is the reliable route.</p>
-    <a id="bookmarklet" class="btn" href="#" draggable="true">Send to Deal Sniper</a>
+    <p class="muted small">Drag this to your bookmarks bar, then click it on a Facebook Marketplace search page to send the listings here. Facebook may block it; the Playwright scanner is the reliable route.</p>
+    <a id="bookmarklet" class="sa-btn sa-btn-outline sa-btn-sm" href="#" draggable="true">Send to Deal Sniper</a>
 
     <div class="form-actions">
-      <button type="button" class="btn" data-close>Cancel</button>
-      <button type="submit" class="btn primary">Save</button>
+      <button type="button" class="sa-btn sa-btn-outline" data-close>Cancel</button>
+      <button type="submit" class="sa-btn sa-btn-primary">Save</button>
     </div>
   </form>
 </dialog>

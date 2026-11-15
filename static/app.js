@@ -68,10 +68,12 @@ async function loadDeals() {
     $("c-drops").textContent = s.drops_count;
     $("c-bundles").textContent = s.bundles_count;
     $("c-saved").textContent = s.saved_count;
-    $("subhead").textContent = `${s.fb_count} Facebook · ${s.gt_count} Gumtree`;
-    renderDeals(data.total_matching);
+    const good = s.steals_count + s.good_deals_count;
+    $("subhead").innerHTML = `<b>${s.total_deals.toLocaleString("en-AU")}</b> listings tracked (${s.fb_count.toLocaleString("en-AU")} Facebook · ${s.gt_count.toLocaleString("en-AU")} Gumtree) · <b>${good.toLocaleString("en-AU")}</b> worth buying · <b>${s.drops_count.toLocaleString("en-AU")}</b> price drops`;
+    state.total = data.total_matching;
+    renderDeals(state.total);
   } catch (e) {
-    $("list").innerHTML = `<div class="empty">Couldn't load deals: ${esc(e.message)}</div>`;
+    $("list").innerHTML = `<div class="sa-empty">Couldn't load deals: ${esc(e.message)}</div>`;
   }
 }
 
@@ -82,43 +84,61 @@ function postedTag(d) {
   return "";
 }
 
+const ICON_PC = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>`;
+const ICON_PART = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>`;
+const placeholder = (d, cls) => `<div class="${cls}">${d.is_bundle ? ICON_PC : ICON_PART}</div>`;
+const BADGE_VARIANT = { STEAL: "filled", GOOD_DEAL: "done", OFFER: "open", FAIR: "", OVERPRICED: "alert", SUSPECT: "alert" };
+const CAT_LABEL = { GPU: "GPU", CPU: "CPU", RAM: "RAM", MOBO: "Motherboard", MOTHERBOARD: "Motherboard", SSD: "Storage", STORAGE: "Storage", PSU: "PSU", CASE: "Case", COOLER: "Cooler" };
+const isAssumed = (p) => /\(assumed/i.test(p.canonical_name);
+const catLabel = (c) => CAT_LABEL[String(c || "").toUpperCase()] || (c ? c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() : "Part");
+const badge = (tier) => `<span class="sa-badge" data-variant="${BADGE_VARIANT[tier] || ""}"><i></i>${esc(TIER_LABEL[tier] || tier)}</span>`;
+
+// The description FB gives us is often just "AU$1,800 • Blayney, NSW"; only show it when it adds something.
+function cleanDesc(d) {
+  const t = (d.description || "").replace("[Deep Inspected] ", "").trim();
+  return t.length >= 40 && !/^AU\$[\d,]+\s*[•·]/.test(t) ? t : "";
+}
+
 function renderDeals(total) {
   const list = $("list");
+  $("shown").textContent = state.deals.length ? `Showing ${state.deals.length.toLocaleString("en-AU")} of ${(total || state.deals.length).toLocaleString("en-AU")}` : "";
   if (!state.deals.length) {
-    list.innerHTML = `<div class="empty">No listings match these filters.<br><button class="btn" data-act="reset">Reset filters</button> <button class="btn primary" data-act="scan">Scan now</button></div>`;
+    list.innerHTML = `<div class="sa-empty"><strong>No listings match these filters</strong><br>Try widening them, or pull fresh listings.<br><br><button class="sa-btn sa-btn-outline" data-act="reset">Reset filters</button> <button class="sa-btn sa-btn-primary" data-act="scan">Scan now</button></div>`;
     return;
   }
   const rows = state.deals.map((d) => {
     const open = state.open.has(d.id);
-    const diff = Math.round(d.profit_margin_aud);
-    const saving = diff > 0
-      ? `<span class="saving pos">${money(diff)} net profit</span>`
-      : `<span class="saving neg">${diff === 0 ? "Break-even" : money(-diff) + " loss at this price"}</span>`;
+    const net = Math.round(d.net_profit_aud ?? d.profit_margin_aud);
+    const profit = net > 0 ? `<span class="pos">+${money(net)} net</span>` : `<span class="neg">${net === 0 ? "Break-even" : "−" + money(-net) + " net"}</span>`;
     const thumb = d.image_url
-      ? `<img class="thumb" src="${esc(safeHref(d.image_url))}" alt="" loading="lazy" referrerpolicy="no-referrer" data-hide-on-error />`
-      : `<div class="thumb ph">PC</div>`;
+      ? `<div class="lphoto"><img src="${esc(safeHref(d.image_url))}" alt="" loading="lazy" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
+      : placeholder(d, "lphoto");
     const src = d.source.includes("Facebook") ? "Facebook" : "Gumtree";
-    const detail = open ? detailHtml(d) : "";
-    return `<article class="deal" data-id="${esc(d.id)}">
-      <button class="deal-main" data-act="toggle" aria-expanded="${open}">
+    const conf = Math.round(d.confidence || 0);
+    const disc = Math.round(d.discount_pct || 0);
+    const chips = (d.matched_parts || []).filter((p) => !isAssumed(p)).slice(0, 6).map((p) => `<span class="spec"><em>${esc(catLabel(p.category))}</em><span>${esc(p.canonical_name)}</span></span>`).join("");
+    const desc = cleanDesc(d);
+    return `<article class="deal t-${esc(d.deal_tier)}${open ? " open" : ""}" data-id="${esc(d.id)}">
+      <div class="lrow" role="button" tabindex="0" data-act="toggle" aria-expanded="${open}">
         ${thumb}
-        <div class="grow">
-          <div class="deal-title">${esc(d.title)}</div>
-          <div class="deal-meta">
-            <span class="badge ${esc(d.deal_tier)}">${esc(TIER_LABEL[d.deal_tier] || d.deal_tier)}</span>
-            <span>${esc(src)}</span><span>·</span><span>${esc(placeLabel(d))}</span>${postedTag(d)}${d.needs_read ? `<span class="tag">needs deep read</span>` : ""}${flagTags(d)}
-          </div>
+        <div class="lmain">
+          <h3 class="ltitle">${esc(d.title)}</h3>
+          <div class="lmeta">${badge(d.deal_tier)}<span>${esc(src)} · ${esc(placeLabel(d))}</span>${postedTag(d)}${d.needs_read ? `<span class="tag">needs deep read</span>` : ""}${flagTags(d)}</div>
+          ${chips ? `<div class="specs">${chips}</div>` : ""}
+          ${desc ? `<p class="ldesc">${esc(desc)}</p>` : ""}
         </div>
-        <div class="price-col num">
-          <div class="price">${money(d.price_aud)}</div>
-          ${saving}
+        <div class="lside">
+          <span class="lprice">${money(d.price_aud)}</span>
+          <span class="lworth">worth ${money(d.estimated_value_aud)}${disc > 0 ? ` · ${disc}% under` : ""}</span>
+          <span class="lprofit">${profit}</span>
+          <span class="lconf">${conf}/100 <progress class="meter" max="100" value="${conf}"></progress></span>
         </div>
-      </button>
-      ${detail}
+      </div>
+      ${open ? detailHtml(d) : ""}
     </article>`;
   });
   const shown = state.deals.length;
-  const more = total > shown ? `<div class="empty slim">Showing the top ${shown} of ${total}. Narrow the filters to see the rest.</div>` : "";
+  const more = total > shown ? `<div class="empty-more">Showing the top ${shown} of ${total.toLocaleString("en-AU")}. Narrow the filters to see the rest.</div>` : "";
   list.innerHTML = rows.join("") + more;
 }
 
@@ -141,26 +161,49 @@ function flagTags(d) {
 }
 
 function detailHtml(d) {
-  const parts = (d.matched_parts || []).map((p) => `<tr><td>${esc(p.canonical_name)}</td><td class="num">${money(p.avg_used_aud)}</td></tr>`).join("");
   const inspected = (d.description || "").includes("[Deep Inspected]");
-  const desc = (d.description || "").replace("[Deep Inspected] ", "");
+  const desc = (d.description || "").replace("[Deep Inspected] ", "").trim();
   const isFB = d.source.includes("Facebook");
   const saved = d.status === "SAVED";
-  return `<div class="deal-detail">
-    <table class="parts"><tbody>${parts}
-      <tr><td><strong>Estimated used value</strong></td><td class="num"><strong>${money(d.estimated_value_aud)}</strong></td></tr>
-      <tr><td>Net profit (after fees, GST, time${d.travel_cost_aud ? ", travel" : ""})</td><td class="num">${money(d.net_profit_aud)} · ${Math.round(d.roi_pct)}% return</td></tr>
-      <tr><td>Max buy price · suggested offer</td><td class="num">${money(d.max_buy_aud)} · ${money(d.offer_aud)}</td></tr>
-      <tr><td>Confidence · plan</td><td class="num">${Math.round(d.confidence)}/100 · ${esc(d.strategy || "")}</td></tr>
-    </tbody></table>
-    ${desc ? `<p class="desc">${esc(desc.slice(0, 600))}${desc.length > 600 ? "…" : ""}</p>` : ""}
-    <div class="actions">
-      <a class="btn sm primary" href="${esc(safeHref(d.url))}" target="_blank" rel="noopener noreferrer">Open listing ↗</a>
-      ${isFB ? `<button class="btn sm" data-act="inspect">${inspected ? "Re-read specs" : "Read full specs"}</button>` : ""}
-      <button class="btn sm" data-act="offer">Copy offer message</button>
-      <button class="btn sm ${saved ? "on" : ""}" data-act="save">${saved ? "★ Saved" : "☆ Save"}</button>
-      <button class="btn sm" data-act="notify">Send alert</button>
-      <button class="btn sm ghost" data-act="hide">Hide</button>
+  const net = Math.round(d.net_profit_aud ?? 0);
+  const conf = Math.round(d.confidence || 0);
+  const row = (k, v, sub) => `<div><dt>${esc(k)}</dt><dd><span>${esc(v)}</span>${sub ? `<small>${esc(sub)}</small>` : ""}</dd></div>`;
+  const specs = (d.matched_parts || []).map((p) => isAssumed(p) ? row(catLabel(p.category) + " (assumed)", p.canonical_name.replace(/\s*\(assumed[^)]*\)/i, ""), `${money(p.avg_used_aud)} est.`) : row(catLabel(p.category), p.canonical_name, `${money(p.avg_used_aud)} used`)).join("");
+  const facts = [
+    row("Seller", d.kind && d.kind !== "private" ? d.kind : "Private"),
+    row("Location", placeLabel(d)),
+    row("Marketplace", isFB ? "Facebook Marketplace" : "Gumtree"),
+    d.posted_at ? row("Listed", d.posted_at.replace(/^Live FB Ad$/, "Live listing").replace(/^\W+/, "")) : "",
+  ].join("");
+  const photo = d.image_url
+    ? `<div class="gal-main"><img src="${esc(safeHref(d.image_url))}" alt="" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
+    : placeholder(d, "gal-main");
+  return `<div class="lexpand">
+    ${photo}
+    <div class="lbody">
+      <div><h4>Specs</h4><dl class="speclist">${specs}${facts}</dl></div>
+      ${desc ? `<div><h4>Description</h4><p>${esc(desc.slice(0, 800))}${desc.length > 800 ? "…" : ""}</p></div>` : ""}
+      <div>
+        <h4>Should you buy?</h4>
+        <div class="verdict">
+          <div><span>Estimated worth</span><b>${money(d.estimated_value_aud)}</b></div>
+          <div><span>Net profit</span><b class="${net > 0 ? "pos" : ""}">${money(net)}</b></div>
+          <div><span>Return</span><b>${Math.round(d.roi_pct || 0)}%</b></div>
+          <div><span>Max buy price</span><b>${money(d.max_buy_aud)}</b></div>
+          <div><span>Suggested offer</span><b>${money(d.offer_aud)}</b></div>
+          <div class="full"><div class="row"><span>Confidence${d.strategy ? ` · plan: ${esc(d.strategy)}` : ""}</span><span class="num">${conf}/100</span></div><progress class="meter wide" max="100" value="${conf}"></progress></div>
+        </div>
+        <p class="note">After selling fees, warranty reserve, GST and your time${d.travel_cost_aud ? `, plus ${money(d.travel_cost_aud)} travel` : ""}.</p>
+      </div>
+      <div class="acts">
+        <a class="sa-btn sa-btn-primary sa-btn-sm" href="${esc(safeHref(d.url))}" target="_blank" rel="noopener noreferrer">Open listing ↗</a>
+        <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="offer">Copy offer message</button>
+        ${isFB ? `<button class="sa-btn sa-btn-outline sa-btn-sm" data-act="inspect">${inspected ? "Re-read specs" : "Read full specs"}</button>` : ""}
+        <button class="sa-btn sa-btn-outline sa-btn-sm ${saved ? "on" : ""}" data-act="save">${saved ? "★ Saved" : "☆ Save"}</button>
+        <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="notify">Send alert</button>
+        <span class="spacer"></span>
+        <button class="sa-btn sa-btn-ghost sa-btn-sm" data-act="hide">Hide</button>
+      </div>
     </div>
   </div>`;
 }
@@ -170,7 +213,7 @@ async function dealAction(act, id, btn) {
   try {
     if (act === "toggle") {
       state.open.has(id) ? state.open.delete(id) : state.open.add(id);
-      renderDeals(state.deals.length);
+      renderDeals(state.total);
       return;
     }
     if (act === "save") {
@@ -211,8 +254,8 @@ function renderProgress(st) {
   const msg = st.running
     ? `Deep scan ${where}: ${pct}% · ${p.listings_seen} listings read · ${p.matched} matched`
     : `Deep scan stopped: ${esc(p.stopped)} · ${p.listings_seen} listings read · ${p.matched} matched`;
-  box.innerHTML = `<div class="row"><span>${msg}</span>${st.running ? '<button class="btn sm" data-cancel>Cancel</button>' : ""}</div>
-    <div class="bar"><span class="w"></span></div>`;
+  box.innerHTML = `<div class="progress-in"><div class="row"><span>${msg}</span>${st.running ? '<button class="sa-btn sa-btn-outline sa-btn-sm" data-cancel>Cancel</button>' : ""}</div>
+    <div class="bar"><span class="w"></span></div></div>`;
   box.querySelector(".w").style.width = pct + "%"; // CSSOM is allowed by the CSP, inline style attributes are not
   if (p && p.errors && p.errors.length) showBanner(p.errors);
 }
@@ -284,7 +327,7 @@ async function runScan(body, label) {
   if (state.scanning) return;
   state.scanning = true;
   $("scanBtn").disabled = true;
-  $("scanBtn").textContent = "Scanning…";
+  $("scanLabel").textContent = "Scanning…";
   toast(`Scanning ${label}…`);
   try {
     const r = await api("/api/scan/live", { method: "POST", body });
@@ -297,7 +340,7 @@ async function runScan(body, label) {
   } finally {
     state.scanning = false;
     $("scanBtn").disabled = false;
-    $("scanBtn").textContent = "Scan now";
+    $("scanLabel").textContent = "Scan now";
   }
 }
 
@@ -305,10 +348,10 @@ function toggleAuto() {
   const btn = $("autoBtn");
   if (state.autoTimer) {
     clearInterval(state.autoTimer); state.autoTimer = null;
-    btn.textContent = "Auto: off"; btn.setAttribute("aria-pressed", "false");
+    btn.querySelector(".switch-label").textContent = "Auto: off"; btn.setAttribute("aria-pressed", "false");
     toast("Auto-scan off.");
   } else {
-    btn.textContent = "Auto: 5 min"; btn.setAttribute("aria-pressed", "true");
+    btn.querySelector(".switch-label").textContent = "Auto: every 5 min"; btn.setAttribute("aria-pressed", "true");
     runScan({ sources: ["facebook"], full_fb_sweep: false }, "Facebook");
     state.autoTimer = setInterval(() => runScan({ sources: ["facebook"], full_fb_sweep: false }, "Facebook"), 5 * 60 * 1000);
     toast("Auto-scan on (every 5 minutes while this tab is open).");
@@ -331,7 +374,7 @@ async function checkAd() {
     const parts = (r.matched_parts || []).map((p) => `<div class="row"><span>${esc(p.canonical_name)}</span><span class="muted num">${money(p.avg_used_aud)}</span></div>`).join("");
     const diff = Math.round(r.profit_margin_aud);
     box.innerHTML = `<div class="result">
-      <div class="row"><strong>Asking ${money(r.detected_price_aud)}</strong><span class="badge ${esc(r.deal_tier)}">${esc(TIER_LABEL[r.deal_tier] || r.deal_tier)}</span></div>
+      <div class="row"><strong>Asking ${money(r.detected_price_aud)}</strong>${badge(r.deal_tier)}</div>
       ${parts}
       <div class="row"><span class="muted">Estimated value</span><strong class="num">${money(r.estimated_value_aud)}</strong></div>
       <div class="row"><span class="muted">${diff >= 0 ? "Below value" : "Above value"}</span><strong class="num">${money(Math.abs(diff))} (${esc(r.discount_pct)}%)</strong></div>
@@ -353,10 +396,10 @@ function renderCatalog() {
   const rows = state.catalog.filter((p) => `${p.canonical_name} ${p.socket_or_series} ${p.category}`.toLowerCase().includes(q));
   $("catalogBody").innerHTML = rows.map((p) => `<tr data-part="${p.id}">
     <td>${esc(p.canonical_name)}<div class="muted small">${esc(p.socket_or_series)}</div></td>
-    <td><input class="input num" data-f="avg" type="number" min="1" value="${esc(p.avg_used_aud)}" aria-label="Average price"></td>
-    <td><input class="input num" data-f="good" type="number" min="1" value="${esc(p.good_deal_aud)}" aria-label="Good deal price"></td>
-    <td><input class="input num" data-f="steal" type="number" min="1" value="${esc(p.steal_aud)}" aria-label="Steal price"></td>
-    <td><button class="btn sm" data-save-part>Save</button></td></tr>`).join("");
+    <td><input class="sa-inline-input num" data-f="avg" type="number" min="1" value="${esc(p.avg_used_aud)}" aria-label="Average price"></td>
+    <td><input class="sa-inline-input num" data-f="good" type="number" min="1" value="${esc(p.good_deal_aud)}" aria-label="Good deal price"></td>
+    <td><input class="sa-inline-input num" data-f="steal" type="number" min="1" value="${esc(p.steal_aud)}" aria-label="Steal price"></td>
+    <td><button class="sa-btn sa-btn-outline sa-btn-sm" data-save-part>Save</button></td></tr>`).join("");
 }
 async function savePart(tr) {
   const v = (f) => parseFloat(tr.querySelector(`[data-f="${f}"]`).value);
@@ -374,7 +417,7 @@ async function loadSettings() {
   state.settings = s;
   state.region = s.state;
   $("region").value = s.state;
-  $("heading").textContent = `${s.city}, ${s.state}`;
+  $("heading").textContent = s.city;
   $("setState").value = s.state;
   $("setCity").value = s.city;
   $("setRadius").value = s.radius_km;
@@ -419,28 +462,48 @@ async function buildBookmarklet() {
 function resetFilters() {
   state.view = "all";
   $("search").value = ""; $("source").value = "ALL"; $("series").value = "ALL"; $("sort").value = "score";
-  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.view === "all")));
+  document.querySelectorAll(".sa-tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.view === "all")));
   loadDeals();
 }
 
+function initTheme() {
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("theme"); if (t === "dark" || t === "light") root.dataset.theme = t; } catch { /* storage may be blocked */ }
+  $("themeBtn").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("theme", root.dataset.theme); } catch { /* ignore */ }
+  });
+}
+
 function init() {
+  initTheme();
   $("tabs").addEventListener("click", (e) => {
-    const t = e.target.closest(".tab"); if (!t) return;
+    const t = e.target.closest(".sa-tab"); if (!t) return;
     state.view = t.dataset.view;
-    document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
+    document.querySelectorAll(".sa-tab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
     loadDeals();
   });
 
   $("list").addEventListener("click", (e) => {
     const b = e.target.closest("[data-act]"); if (!b) return;
+    if (b.dataset.act === "toggle" && e.target.closest("a, button")) return;
     const act = b.dataset.act;
     if (act === "reset") return resetFilters();
     if (act === "scan") return runScan({ sources: ["facebook", "gumtree"], full_fb_sweep: false }, "Facebook and Gumtree");
     const id = b.closest(".deal")?.dataset.id;
     if (id) dealAction(act, id, b);
   });
-  // CSP forbids inline onerror, so hide broken thumbnails via a capture-phase listener.
-  $("list").addEventListener("error", (e) => { if (e.target.matches?.("[data-hide-on-error]")) e.target.style.visibility = "hidden"; }, true);
+  $("list").addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".lrow")) { e.preventDefault(); e.target.click(); }
+  });
+  // CSP forbids inline onerror, so swap broken photos for the placeholder via a capture-phase listener.
+  $("list").addEventListener("error", (e) => {
+    const img = e.target;
+    if (!img.matches?.("[data-hide-on-error]")) return;
+    const box = img.parentElement;
+    box.innerHTML = img.dataset.bundle === "1" ? ICON_PC : ICON_PART;
+  }, true);
 
   $("region").addEventListener("change", async (e) => {
     try {

@@ -92,7 +92,7 @@ app.include_router(scanning.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
     "img-src 'self' https: data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
