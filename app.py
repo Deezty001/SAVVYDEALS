@@ -77,6 +77,8 @@ async def origin_guard(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     if path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif path.startswith("/static/") and not path.startswith("/static/fonts/"):
+        response.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy shows up straight away
     return response
 
 
