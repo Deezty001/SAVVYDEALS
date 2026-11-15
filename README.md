@@ -88,6 +88,7 @@ Logged out, Facebook caps a search at 24 results; the deep scan splits by price 
 The Dockerfile builds a slim image (no browser; Facebook is read over HTTP). Set these environment variables:
 
 - `DEALS_PUBLIC_URL`: e.g. `https://deals.savvycomputers.com.au` (allowed host + origin, bookmarklet endpoint).
+- `DEALS_PROXY` (optional): outbound proxy, e.g. `http://user:pass@host:port`. Facebook blocks VPS (datacenter) IPs, so use an Australian residential proxy here.
 - `DEALS_PASSWORD`: dashboard login. Required anywhere public; unset means no login (local use).
 - Mount a persistent volume at `/data` (holds `deals.db`). `/healthz` is the health check.
 

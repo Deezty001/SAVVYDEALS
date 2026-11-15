@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
+from config import PROXIES
 from fb import (  # noqa: F401  (Facebook collection lives in fb.py; re-exported for existing imports)
     AU_STATE_SUFFIXES, FB_CITY_SLUGS, PROFILE_DIR, _launch_browser, _launch_profile_context,
     inspect_facebook_item_details, scrape_facebook_exhaustive, scrape_facebook_marketplace_au,
@@ -98,7 +99,7 @@ def _scrape_gumtree_sync(query: str, state: str = "NSW", radius_km: int = 50, ma
 
     results: List[Dict[str, Any]] = []
     try:
-        resp = cffi_requests.get(url, impersonate="safari17_0", timeout=15)
+        resp = cffi_requests.get(url, impersonate="safari17_0", timeout=15, proxies=PROXIES)
         if resp.status_code != 200:
             log.warning("Gumtree returned HTTP %s for %r", resp.status_code, query)
             if errors is not None:
@@ -205,7 +206,7 @@ def _inspect_gumtree_sync(url: str) -> Dict[str, Any]:
         out["error"] = "URL is not a Gumtree listing"
         return out
     try:
-        resp = cffi_requests.get(url, impersonate="safari17_0", timeout=15)
+        resp = cffi_requests.get(url, impersonate="safari17_0", timeout=15, proxies=PROXIES)
     except Exception as e:
         out["error"] = type(e).__name__
         return out

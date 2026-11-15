@@ -33,7 +33,7 @@ from curl_cffi import requests as cffi_requests
 from playwright.async_api import async_playwright
 
 import health
-from config import BROWSER_ENABLED
+from config import BROWSER_ENABLED, PROXIES
 
 log = logging.getLogger("fb")
 
@@ -264,7 +264,7 @@ def classify_page(html: str, http_status: int, final_url: str, nodes: int) -> st
 # Transport
 # --------------------------------------------------------------------------------------
 def _http_get_sync(url: str, impersonate: str) -> Tuple[int, str, str]:
-    r = cffi_requests.get(url, impersonate=impersonate, timeout=20, headers=HTTP_HEADERS)
+    r = cffi_requests.get(url, impersonate=impersonate, timeout=20, headers=HTTP_HEADERS, proxies=PROXIES)
     return r.status_code, r.text, str(r.url)
 
 
