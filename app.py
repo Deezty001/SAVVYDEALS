@@ -175,7 +175,7 @@ def list_deals(
         args.append("%" + series.lower() + "%")
     sort_sql = {
         "profit": "profit_margin_aud DESC", "price_asc": "price_aud ASC", "price_desc": "price_aud DESC",
-        "discount": "discount_pct DESC", "newest": "discovered_at DESC",
+        "discount": "discount_pct DESC", "newest": "(CASE WHEN listed_at > 0 THEN listed_at ELSE CAST(strftime('%s', discovered_at) AS INTEGER) END) DESC",
     }.get(sort_by, "deal_score DESC")
     order = f"{sort_sql}, deal_score DESC, discovered_at DESC"
 

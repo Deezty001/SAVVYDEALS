@@ -77,11 +77,26 @@ async function loadDeals() {
   }
 }
 
+// When the ad went up: Facebook gives us the real listing time; otherwise fall back to when we first saw it.
+function listingDate(d) {
+  const real = Number(d.listed_at) > 0;
+  const ms = real ? d.listed_at * 1000 : Date.parse((d.discovered_at || "").replace(" ", "T").replace(/Z?$/, "Z"));
+  if (!ms || Number.isNaN(ms)) return null;
+  const mins = Math.max(0, (Date.now() - ms) / 60000);
+  const rel = mins < 60 ? `${Math.max(1, Math.round(mins))}m ago` : mins < 1440 ? `${Math.round(mins / 60)}h ago` : `${Math.round(mins / 1440)}d ago`;
+  const abs = new Date(ms).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: new Date(ms).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+  const full = new Date(ms).toLocaleString("en-AU", { dateStyle: "medium", timeStyle: "short" });
+  return { real, rel, abs, full };
+}
+
 function postedTag(d) {
   const p = d.posted_at || "";
-  if (p.includes("Dropped")) return `<span class="tag drop">${esc(p)}</span>`;
-  if (p.includes("Just Listed")) return `<span class="tag">Just listed</span>`;
-  return "";
+  let out = "";
+  if (p.includes("Dropped")) out += `<span class="tag drop">${esc(p)}</span>`;
+  else if (p.includes("Just Listed")) out += `<span class="tag">Just listed</span>`;
+  const t = listingDate(d);
+  if (t) out += `<span class="tag" title="${esc((t.real ? "Listed " : "First seen ") + t.full)}">${t.real ? "" : "seen "}${esc(t.abs)} · ${esc(t.rel)}</span>`;
+  return out;
 }
 
 const ICON_PC = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>`;
@@ -108,6 +123,7 @@ function renderDeals(total) {
   }
   const rows = state.deals.map((d) => {
     const open = state.open.has(d.id);
+    if (open) return expandedDeal(d);
     const net = Math.round(d.net_profit_aud ?? d.profit_margin_aud);
     const profit = net > 0 ? `<span class="pos">+${money(net)} net</span>` : `<span class="neg">${net === 0 ? "Break-even" : "−" + money(-net) + " net"}</span>`;
     const thumb = d.image_url
@@ -134,7 +150,6 @@ function renderDeals(total) {
           <span class="lconf">${conf}/100 <progress class="meter" max="100" value="${conf}"></progress></span>
         </div>
       </div>
-      ${open ? detailHtml(d) : ""}
     </article>`;
   });
   const shown = state.deals.length;
@@ -160,52 +175,69 @@ function flagTags(d) {
   return out.join("");
 }
 
-function detailHtml(d) {
+// Expanded listing: the row's photo grows in place; header, description, specs and actions sit beside it.
+function expandedDeal(d) {
   const inspected = (d.description || "").includes("[Deep Inspected]");
   const desc = (d.description || "").replace("[Deep Inspected] ", "").trim();
   const isFB = d.source.includes("Facebook");
   const saved = d.status === "SAVED";
-  const net = Math.round(d.net_profit_aud ?? 0);
+  const net = Math.round(d.net_profit_aud ?? d.profit_margin_aud);
+  const profit = net > 0 ? `<span class="pos">+${money(net)} net</span>` : `<span class="neg">${net === 0 ? "Break-even" : "−" + money(-net) + " net"}</span>`;
   const conf = Math.round(d.confidence || 0);
-  const row = (k, v, sub) => `<div><dt>${esc(k)}</dt><dd><span>${esc(v)}</span>${sub ? `<small>${esc(sub)}</small>` : ""}</dd></div>`;
-  const specs = (d.matched_parts || []).map((p) => isAssumed(p) ? row(catLabel(p.category) + " (assumed)", p.canonical_name.replace(/\s*\(assumed[^)]*\)/i, ""), `${money(p.avg_used_aud)} est.`) : row(catLabel(p.category), p.canonical_name, `${money(p.avg_used_aud)} used`)).join("");
-  const facts = [
-    row("Seller", d.kind && d.kind !== "private" ? d.kind : "Private"),
-    row("Location", placeLabel(d)),
-    row("Marketplace", isFB ? "Facebook Marketplace" : "Gumtree"),
-    d.posted_at ? row("Listed", d.posted_at.replace(/^Live FB Ad$/, "Live listing").replace(/^\W+/, "")) : "",
-  ].join("");
+  const disc = Math.round(d.discount_pct || 0);
+  const src = isFB ? "Facebook" : "Gumtree";
+  const chips = (d.matched_parts || []).filter((p) => !isAssumed(p)).slice(0, 6).map((p) => `<span class="spec"><em>${esc(catLabel(p.category))}</em><span>${esc(p.canonical_name)}</span></span>`).join("");
   const photo = d.image_url
-    ? `<div class="gal-main"><img src="${esc(safeHref(d.image_url))}" alt="" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
-    : placeholder(d, "gal-main");
-  return `<div class="lexpand">
-    ${photo}
-    <div class="lbody">
-      <div><h4>Specs</h4><dl class="speclist">${specs}${facts}</dl></div>
-      ${desc ? `<div><h4>Description</h4><p>${esc(desc.slice(0, 800))}${desc.length > 800 ? "…" : ""}</p></div>` : ""}
-      <div>
-        <h4>Should you buy?</h4>
-        <div class="verdict">
-          <div><span>Estimated worth</span><b>${money(d.estimated_value_aud)}</b></div>
-          <div><span>Net profit</span><b class="${net > 0 ? "pos" : ""}">${money(net)}</b></div>
-          <div><span>Return</span><b>${Math.round(d.roi_pct || 0)}%</b></div>
-          <div><span>Max buy price</span><b>${money(d.max_buy_aud)}</b></div>
-          <div><span>Suggested offer</span><b>${money(d.offer_aud)}</b></div>
-          <div class="full"><div class="row"><span>Confidence${d.strategy ? ` · plan: ${esc(d.strategy)}` : ""}</span><span class="num">${conf}/100</span></div><progress class="meter wide" max="100" value="${conf}"></progress></div>
+    ? `<div class="dx-photo"><img src="${esc(safeHref(d.image_url))}" alt="" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
+    : placeholder(d, "dx-photo");
+  const parts = (d.matched_parts || []).map((p) => {
+    const assumed = isAssumed(p);
+    const name = p.canonical_name.replace(/\s*\(assumed[^)]*\)/i, "");
+    return `<div><span class="k">${esc(name)}</span><small>${money(p.avg_used_aud)} ${assumed ? "est." : "used"}</small></div>`;
+  }).join("");
+  const t = listingDate(d);
+  const listed = t ? [t.real ? "Listed" : "First seen", `${t.abs} · ${t.rel}`] : (d.posted_at ? ["Listed", d.posted_at.replace(/^Live FB Ad$/, "Live listing").replace(/^\W+/, "")] : null);
+  const facts = [
+    ["Seller", d.kind && d.kind !== "private" ? d.kind : "Private"],
+    ["Location", placeLabel(d)],
+    ["Marketplace", isFB ? "Facebook Marketplace" : "Gumtree"],
+    listed,
+  ].filter(Boolean).map(([k, v]) => `<div><span class="lbl">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("");
+  return `<article class="deal open t-${esc(d.deal_tier)}" data-id="${esc(d.id)}">
+    <div class="dx">
+      <div data-act="toggle" role="button" tabindex="0" aria-expanded="true" aria-label="Collapse listing" class="dx-photo-btn">${photo}</div>
+      <div class="dx-body">
+        <div class="dx-head" data-act="toggle" role="button" tabindex="0" aria-expanded="true">
+          <div class="dx-title">
+            <h3 class="ltitle">${esc(d.title)}</h3>
+            <div class="lmeta">${badge(d.deal_tier)}<span>${esc(src)} · ${esc(placeLabel(d))}</span>${postedTag(d)}${d.needs_read ? `<span class="tag">needs deep read</span>` : ""}${flagTags(d)}</div>
+            ${chips ? `<div class="specs">${chips}</div>` : ""}
+          </div>
+          <div class="lside">
+            <span class="lprice">${money(d.price_aud)}</span>
+            <span class="lworth">worth ${money(d.estimated_value_aud)}${disc > 0 ? ` · ${disc}% under` : ""}</span>
+            <span class="lprofit">${profit}</span>
+            <span class="lconf">${conf}/100 <progress class="meter" max="100" value="${conf}"></progress></span>
+          </div>
         </div>
-        <p class="note">After selling fees, warranty reserve, GST and your time${d.travel_cost_aud ? `, plus ${money(d.travel_cost_aud)} travel` : ""}.</p>
-      </div>
-      <div class="acts">
-        <a class="sa-btn sa-btn-primary sa-btn-sm" href="${esc(safeHref(d.url))}" target="_blank" rel="noopener noreferrer">Open listing ↗</a>
-        <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="offer">Copy offer message</button>
-        ${isFB ? `<button class="sa-btn sa-btn-outline sa-btn-sm" data-act="inspect">${inspected ? "Re-read specs" : "Read full specs"}</button>` : ""}
-        <button class="sa-btn sa-btn-outline sa-btn-sm ${saved ? "on" : ""}" data-act="save">${saved ? "★ Saved" : "☆ Save"}</button>
-        <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="notify">Send alert</button>
-        <span class="spacer"></span>
-        <button class="sa-btn sa-btn-ghost sa-btn-sm" data-act="hide">Hide</button>
+        ${desc ? `<div><h4>Description</h4><p>${esc(desc.slice(0, 800))}${desc.length > 800 ? "…" : ""}</p></div>` : ""}
+        <div class="dx-specs">
+          <h4>Specs</h4>
+          ${parts ? `<div class="dx-grid dx-parts">${parts}</div>` : ""}
+          <div class="dx-grid dx-facts">${facts}</div>
+        </div>
+        <div class="acts">
+          <a class="sa-btn sa-btn-primary sa-btn-sm" href="${esc(safeHref(d.url))}" target="_blank" rel="noopener noreferrer">Open listing ↗</a>
+          <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="offer">Copy offer message</button>
+          ${isFB ? `<button class="sa-btn sa-btn-outline sa-btn-sm" data-act="inspect">${inspected ? "Re-read specs" : "Read full specs"}</button>` : ""}
+          <button class="sa-btn sa-btn-outline sa-btn-sm ${saved ? "on" : ""}" data-act="save">${saved ? "★ Saved" : "☆ Save"}</button>
+          <button class="sa-btn sa-btn-outline sa-btn-sm" data-act="notify">Send alert</button>
+          <span class="spacer"></span>
+          <button class="sa-btn sa-btn-ghost sa-btn-sm" data-act="hide">Hide</button>
+        </div>
       </div>
     </div>
-  </div>`;
+  </article>`;
 }
 
 async function dealAction(act, id, btn) {
@@ -495,7 +527,7 @@ function init() {
     if (id) dealAction(act, id, b);
   });
   $("list").addEventListener("keydown", (e) => {
-    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".lrow")) { e.preventDefault(); e.target.click(); }
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".lrow, .dx-head, .dx-photo-btn")) { e.preventDefault(); e.target.click(); }
   });
   // CSP forbids inline onerror, so swap broken photos for the placeholder via a capture-phase listener.
   $("list").addEventListener("error", (e) => {
