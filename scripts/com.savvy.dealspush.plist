@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Runs the push every 15 minutes while you're logged in. Install:
+     cp scripts/com.savvy.dealspush.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.savvy.dealspush.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.savvy.dealspush</string>
+  <key>ProgramArguments</key><array><string>/Users/adamkarim/Documents/au-pc-deals/scripts/push_to_hosted.sh</string></array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/tmp/deals-push.log</string>
+  <key>StandardErrorPath</key><string>/tmp/deals-push.log</string>
+</dict></plist>

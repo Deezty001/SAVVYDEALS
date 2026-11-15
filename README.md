@@ -96,6 +96,8 @@ To push from a home machine to the hosted instance (e.g. if Facebook blocks the 
 DEALS_API_BASE=https://deals.savvycomputers.com.au DEALS_INGEST_TOKEN=... .venv/bin/python fb_playwright_scanner.py --state NSW
 ```
 
+Automate it with `scripts/push_to_hosted.sh` (reads `~/.config/deals-push.env`, outside the repo) and the launchd job in `scripts/com.savvy.dealspush.plist`, which pushes every 15 minutes.
+
 ## Security notes
 
 - Locally the server binds to `127.0.0.1`; hosted, it sits behind Traefik with `DEALS_PASSWORD` login. The Host header is checked and cross-origin browser requests to the API are rejected.
