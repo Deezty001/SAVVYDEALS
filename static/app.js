@@ -240,12 +240,40 @@ function expandedDeal(d) {
   </article>`;
 }
 
+// Smooth open/close: the card's height eases, the photo grows from its old box, the text fades in.
+function animateToggle(el, from, opening) {
+  if (!el || !el.animate || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const ease = "cubic-bezier(.2,.7,.2,1)";
+  const ms = 280;
+  const to = el.getBoundingClientRect().height;
+  el.style.overflow = "hidden";
+  const done = () => { el.style.overflow = ""; };
+  el.animate([{ height: from.h + "px" }, { height: to + "px" }], { duration: ms, easing: ease }).onfinish = done;
+  const photo = el.querySelector(".lphoto, .dx-photo");
+  if (photo && from.photo) {
+    const now = photo.getBoundingClientRect();
+    const dx = from.photo.left - now.left, dy = from.photo.top - now.top;
+    const sx = from.photo.width / now.width, sy = from.photo.height / now.height;
+    photo.style.transformOrigin = "0 0";
+    photo.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transform: "none" }], { duration: ms, easing: ease })
+      .onfinish = () => { photo.style.transformOrigin = ""; };
+  }
+  const fade = el.querySelectorAll(opening ? ".dx-body > *" : ".lmain, .lside");
+  fade.forEach((n, i) => n.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }],
+    { duration: ms, delay: 40 + i * 35, easing: ease, fill: "backwards" }));
+}
+
 async function dealAction(act, id, btn) {
   const d = state.deals.find((x) => x.id === id);
   try {
     if (act === "toggle") {
-      state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+      const sel = `.deal[data-id="${CSS.escape(id)}"]`;
+      const before = document.querySelector(sel);
+      const from = before && { h: before.getBoundingClientRect().height, photo: before.querySelector(".lphoto, .dx-photo")?.getBoundingClientRect() };
+      const opening = !state.open.has(id);
+      opening ? state.open.add(id) : state.open.delete(id);
       renderDeals(state.total);
+      if (from) animateToggle(document.querySelector(sel), from, opening);
       return;
     }
     if (act === "save") {
