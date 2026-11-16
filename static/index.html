@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
   <title>PC Deal Sniper</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261117" />
+  <link rel="stylesheet" href="/static/style.css?v=20261119" />
 </head>
 <body>
 <div class="sa">
@@ -19,8 +19,14 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"/></svg><span class="lbl">Price guide</span></button>
     <button class="sa-btn sa-btn-ghost sa-btn-sm" data-open="healthDlg" id="healthBtn" title="Is Facebook / Gumtree collection working?">
       <span class="dot" id="healthDot"></span><span class="lbl" id="healthLabel">Scan health</span></button>
-    <a class="sa-icon-btn" href="/api/export.xlsx" download aria-label="Export Excel" title="Export Excel">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></a>
+    <details class="sa-dl">
+      <summary class="sa-icon-btn" aria-label="Download Excel" title="Download Excel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></summary>
+      <div class="sa-menu sa-dl-menu">
+        <a class="sa-menu-item" href="/api/export-summary.xlsx" download>Summarised<span class="sa-dl-sub">title, price, location, link</span></a>
+        <a class="sa-menu-item" href="/api/export.xlsx" download>Full detail<span class="sa-dl-sub">all columns + sheets</span></a>
+      </div>
+    </details>
     <button class="sa-icon-btn" data-open="settingsDlg" aria-label="Settings" title="Settings">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
     <button class="sa-icon-btn" id="themeBtn" aria-label="Toggle theme" title="Toggle theme">

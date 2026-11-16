@@ -1,6 +1,7 @@
 """Excel export: deals, pickup trips, parts price guide and price trends."""
 import io
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from openpyxl import Workbook
@@ -35,6 +36,47 @@ def _sheet(ws, headers: List[str], widths: List[int], rows: List[List[Any]]) -> 
     ws.freeze_panes = "A2"
     if rows:
         ws.auto_filter.ref = ws.dimensions
+
+
+def _listed(d: Dict[str, Any]) -> str:
+    """When the ad was listed, Sydney time; falls back to when we first found it."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Australia/Sydney")
+    try:
+        if d.get("listed_at"):
+            return datetime.fromtimestamp(d["listed_at"], tz).strftime("%d %b %Y %H:%M")
+        found = datetime.fromisoformat(d["discovered_at"]).replace(tzinfo=timezone.utc)
+        return found.astimezone(tz).strftime("%d %b %Y %H:%M")
+    except (ValueError, KeyError, TypeError):
+        return ""
+
+
+def build_summary() -> bytes:
+    """One sheet: Title, Description, Price, Location, Listed, Link."""
+    conn = get_conn()
+    listings = [dict(r) for r in conn.execute(
+        "SELECT * FROM listings WHERE status!='HIDDEN' AND gone_at='' ORDER BY "
+        "(CASE WHEN listed_at > 0 THEN listed_at ELSE CAST(strftime('%s', discovered_at) AS INTEGER) END) DESC")]
+    conn.close()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Listings"
+    rows = []
+    for d in listings:
+        desc = re.sub(r"\s+", " ", (d.get("description") or "").replace("[Deep Inspected] ", "")).strip()[:300]
+        loc = ", ".join(x for x in (str(d.get("suburb") or "").title(), str(d.get("state") or "")) if x)
+        rows.append([d.get("title"), desc, d.get("price_aud"), loc, _listed(d), d.get("url")])
+    _sheet(ws, ["Title", "Description", "Price", "Location", "Listed", "Link"], [48, 70, 10, 20, 18, 45], rows)
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            c.alignment = Alignment(vertical="top", wrap_text=c.column in (1, 2))
+        row[2].number_format = '"$"#,##0'
+        if row[5].value:
+            row[5].hyperlink, row[5].font = row[5].value, Font(color="0563C1", underline="single")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def build_workbook(tiers: Optional[List[str]] = None) -> bytes:

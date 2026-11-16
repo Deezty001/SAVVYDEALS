@@ -512,6 +512,13 @@ def learn() -> Dict[str, Any]:
     return res
 
 
+@app.get("/api/export-summary.xlsx")
+def export_summary_file() -> Response:
+    """Streamlined Excel: title, description, price, location, listed, link."""
+    return Response(export_xlsx.build_summary(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="au-pc-deals-summary.xlsx"'})
+
+
 @app.get("/api/export.xlsx")
 def export_xlsx_file(tier: Optional[str] = None) -> Response:
     """Excel workbook: Deals, Pickup trips, Price guide, Falling prices. ?tier=GOOD_OR_BETTER|STEAL|OFFER narrows Deals."""
