@@ -20,6 +20,9 @@ if PUBLIC_URL:
 DASHBOARD_PASSWORD = os.environ.get("DEALS_PASSWORD", "")
 # eBay marketplace account deletion notifications (see ebay_notify.py). Unset = endpoint disabled.
 EBAY_VERIFICATION_TOKEN = os.environ.get("EBAY_VERIFICATION_TOKEN", "").strip()
+# eBay Browse API credentials (App ID = Client ID, Cert ID = Client Secret). Unset = eBay source disabled.
+EBAY_APP_ID = os.environ.get("EBAY_APP_ID", "").strip()
+EBAY_CERT_ID = os.environ.get("EBAY_CERT_ID", "").strip()
 # Optional outbound proxy for Facebook / Gumtree requests, e.g. http://user:pass@au.residential-proxy.example:8000.
 # Facebook blocks datacenter IPs (VPS); an Australian residential proxy is what gets past that.
 PROXY = os.environ.get("DEALS_PROXY", "").strip()

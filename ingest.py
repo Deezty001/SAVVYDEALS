@@ -30,6 +30,8 @@ def _clip(value: Any, n: int) -> str:
 
 def source_for_url(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
+    if "ebay" in host:
+        return "eBay AU"
     return "Gumtree AU" if "gumtree" in host else "Facebook Marketplace"
 
 

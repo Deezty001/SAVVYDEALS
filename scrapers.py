@@ -26,7 +26,8 @@ log = logging.getLogger("scrapers")
 # Created by fb_login.py. When present, scans reuse that logged-in session: logged-out Facebook
 # caps every search at 24 results and shows a login dialog, so it cannot return "everything".
 
-ALLOWED_LISTING_HOSTS = ("www.facebook.com", "facebook.com", "m.facebook.com", "www.gumtree.com.au", "gumtree.com.au")
+ALLOWED_LISTING_HOSTS = ("www.facebook.com", "facebook.com", "m.facebook.com", "www.gumtree.com.au", "gumtree.com.au",
+                         "www.ebay.com.au")
 
 
 def is_safe_listing_url(url: str, hosts: Tuple[str, ...] = ALLOWED_LISTING_HOSTS) -> bool:

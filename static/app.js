@@ -129,7 +129,7 @@ function renderDeals(total) {
     const thumb = d.image_url
       ? `<div class="lphoto"><img src="${esc(safeHref(d.image_url))}" alt="" loading="lazy" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
       : placeholder(d, "lphoto");
-    const src = d.source.includes("Facebook") ? "Facebook" : "Gumtree";
+    const src = d.source.includes("Facebook") ? "Facebook" : d.source.includes("eBay") ? "eBay" : "Gumtree";
     const conf = Math.round(d.confidence || 0);
     const disc = Math.round(d.discount_pct || 0);
     const chips = (d.matched_parts || []).filter((p) => !isAssumed(p)).slice(0, 6).map((p) => `<span class="spec"><em>${esc(catLabel(p.category))}</em><span>${esc(p.canonical_name)}</span></span>`).join("");
@@ -185,7 +185,7 @@ function expandedDeal(d) {
   const profit = net > 0 ? `<span class="pos">+${money(net)} net</span>` : `<span class="neg">${net === 0 ? "Break-even" : "−" + money(-net) + " net"}</span>`;
   const conf = Math.round(d.confidence || 0);
   const disc = Math.round(d.discount_pct || 0);
-  const src = isFB ? "Facebook" : "Gumtree";
+  const src = isFB ? "Facebook" : d.source.includes("eBay") ? "eBay" : "Gumtree";
   const chips = (d.matched_parts || []).filter((p) => !isAssumed(p)).slice(0, 6).map((p) => `<span class="spec"><em>${esc(catLabel(p.category))}</em><span>${esc(p.canonical_name)}</span></span>`).join("");
   const photo = d.image_url
     ? `<div class="dx-photo"><img src="${esc(safeHref(d.image_url))}" alt="" referrerpolicy="no-referrer" data-hide-on-error data-bundle="${d.is_bundle ? 1 : 0}" /></div>`
@@ -200,7 +200,7 @@ function expandedDeal(d) {
   const facts = [
     ["Seller", d.kind && d.kind !== "private" ? d.kind : "Private"],
     ["Location", placeLabel(d)],
-    ["Marketplace", isFB ? "Facebook Marketplace" : "Gumtree"],
+    ["Marketplace", isFB ? "Facebook Marketplace" : src === "eBay" ? "eBay" : "Gumtree"],
     listed,
   ].filter(Boolean).map(([k, v]) => `<div><span class="lbl">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("");
   return `<article class="deal open t-${esc(d.deal_tier)}" data-id="${esc(d.id)}">

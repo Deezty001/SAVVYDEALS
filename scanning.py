@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
+import ebay
 import engine_ops
 from alerts import check_health_and_alert, dispatch_auto_alerts
 from config import DEEP_CHUNK, SWEEP_STATES
@@ -249,6 +250,9 @@ async def run_quick_pass(per_pass: int = 30) -> None:
             for q in batch[:3]:
                 items += await scrape_gumtree_au(q, state=state if state != "ALL" else "NSW",
                                                  radius_km=radius_km, max_results=16, errors=errors)
+            if ebay.enabled():
+                # 14 searches x 144 passes/day ~ 2,000 calls: inside eBay's 5,000/day free quota
+                items += await ebay.scrape_ebay_au(ebay.next_batch(14), max_per_query=50, errors=errors)
             summary = ingest_raw_listings(items)
             await dispatch_auto_alerts(summary["_saved_ids"])
             if fb_seen == 0 and any(e.startswith("Facebook") for e in errors):
