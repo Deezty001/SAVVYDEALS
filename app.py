@@ -21,6 +21,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import ebay_notify
 import engine_ops
 import export_xlsx
 import pricing
@@ -91,6 +92,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(scanning.router)
+app.include_router(ebay_notify.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 CSP = (

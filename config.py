@@ -18,6 +18,8 @@ if PUBLIC_URL:
     ALLOWED_HOSTS.append(PUBLIC_URL.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0])
 # Dashboard password. Unset = no login (fine on 127.0.0.1, required anywhere public).
 DASHBOARD_PASSWORD = os.environ.get("DEALS_PASSWORD", "")
+# eBay marketplace account deletion notifications (see ebay_notify.py). Unset = endpoint disabled.
+EBAY_VERIFICATION_TOKEN = os.environ.get("EBAY_VERIFICATION_TOKEN", "").strip()
 # Optional outbound proxy for Facebook / Gumtree requests, e.g. http://user:pass@au.residential-proxy.example:8000.
 # Facebook blocks datacenter IPs (VPS); an Australian residential proxy is what gets past that.
 PROXY = os.environ.get("DEALS_PROXY", "").strip()

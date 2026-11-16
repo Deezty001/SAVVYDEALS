@@ -18,7 +18,7 @@ from db import get_conn, get_setting
 
 COOKIE = "deals_session"
 SESSION_SECONDS = 30 * 24 * 3600
-OPEN_PATHS = {"/login", "/api/ingest", "/static/style.css", "/healthz"}
+OPEN_PATHS = {"/login", "/api/ingest", "/static/style.css", "/healthz", "/ebay/account-deletion"}
 OPEN_PREFIXES = ("/static/fonts/",)  # the login page needs its fonts
 MAX_FAILS, FAIL_WINDOW = 8, 15 * 60
 
